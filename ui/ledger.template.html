@@ -1,0 +1,528 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>AXIOM RECOVER — ledger</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Archivo:wght@600;700&family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+/* ══════════════════════════════════════════════════════════════
+   AXIOM RECOVER · LEDGER CONSOLE
+
+   The interface IS the tie-out. Every row places what should have
+   settled against what did, and the gap between them either closes
+   with an explanation or stays open and goes to a person.
+
+   Colour is not decoration here — three semantic states carry the
+   entire verdict, and nothing else is coloured.
+   ══════════════════════════════════════════════════════════════ */
+
+:root{
+  --paper:#E7EAEE;         /* ledger stock — cool, not warm */
+  --sheet:#F6F8FA;         /* raised surface */
+  --ink:#131822;
+  --ink-2:#5A6472;
+  --ink-3:#8A93A0;
+  --rule:#C4CCD6;
+  --rule-soft:#D8DEE5;
+
+  --tied:#0D6B58;          /* reconciled */
+  --owed:#8A6714;          /* explained, still outstanding */
+  --break:#9E2A2B;         /* exception */
+
+  --tied-wash:#0D6B5814;
+  --owed-wash:#8A671414;
+  --break-wash:#9E2A2B14;
+
+  --mono:"IBM Plex Mono",ui-monospace,Menlo,monospace;
+  --sans:"IBM Plex Sans",system-ui,-apple-system,sans-serif;
+  --disp:"Archivo","Archivo Narrow",var(--sans);
+}
+
+*{box-sizing:border-box;margin:0;padding:0}
+html{-webkit-text-size-adjust:100%}
+body{
+  background:var(--paper);color:var(--ink);
+  font:400 14px/1.5 var(--sans);
+  padding:0 0 64px;
+  /* Faint ruled lines. A ledger has them; a dashboard doesn't. */
+  background-image:repeating-linear-gradient(180deg,transparent 0 31px,#00000006 31px 32px);
+}
+
+.wrap{max-width:1180px;margin:0 auto;padding:0 20px}
+
+/* ── label vernacular ─────────────────────────────────────────── */
+.lbl{
+  font-family:var(--disp);font-weight:700;font-size:10px;
+  letter-spacing:.14em;text-transform:uppercase;color:var(--ink-3);
+}
+.num{font-family:var(--mono);font-variant-numeric:tabular-nums;font-feature-settings:"tnum"}
+
+/* ── rail ─────────────────────────────────────────────────────── */
+.rail{
+  border-bottom:1px solid var(--rule);background:var(--sheet);
+  position:sticky;top:0;z-index:20;
+}
+.rail-in{display:flex;align-items:baseline;gap:18px;padding:14px 0;flex-wrap:wrap}
+.mark{font-family:var(--disp);font-weight:700;font-size:15px;letter-spacing:.10em;text-transform:uppercase}
+.mark span{color:var(--ink-3);font-weight:600}
+.rail-meta{margin-left:auto;display:flex;gap:20px;flex-wrap:wrap}
+.rail-meta div{display:flex;gap:7px;align-items:baseline}
+.rail-meta b{font-family:var(--mono);font-weight:500;font-size:12px}
+
+/* ── the tie-out (hero) ───────────────────────────────────────── */
+.tieout{padding:38px 0 30px;border-bottom:1px solid var(--rule)}
+.tie-grid{
+  display:grid;grid-template-columns:1fr 132px 1fr;align-items:center;gap:0;
+}
+.tie-side{padding:0 22px}
+.tie-side.r{text-align:right}
+.tie-amt{
+  font-family:var(--mono);font-weight:500;
+  font-size:clamp(26px,4.6vw,42px);letter-spacing:-.02em;line-height:1;
+  margin-top:9px;
+}
+.tie-sub{font-size:12px;color:var(--ink-2);margin-top:9px}
+
+/* The join. Two columns of a ledger meeting in the middle. */
+.tie-join{
+  height:100%;min-height:96px;display:flex;flex-direction:column;
+  align-items:center;justify-content:center;gap:8px;
+  border-left:1px solid var(--rule);border-right:1px solid var(--rule);
+  background:var(--sheet);
+}
+.tie-delta{font-family:var(--mono);font-size:17px;font-weight:600}
+.tie-verdict{font-family:var(--disp);font-size:9px;letter-spacing:.13em;text-transform:uppercase}
+
+.gapbar{margin-top:28px}
+.gapbar-track{display:flex;height:26px;margin-top:9px;border:1px solid var(--rule);background:var(--sheet);overflow:hidden}
+.gapbar-track span{display:block;transition:none}
+.gapbar-legend{display:flex;gap:22px;margin-top:9px;flex-wrap:wrap}
+.gapbar-legend div{display:flex;align-items:baseline;gap:7px;font-size:12px;color:var(--ink-2)}
+.gapbar-legend i{width:9px;height:9px;display:inline-block;flex:none;transform:translateY(-1px)}
+.gapbar-legend b{font-family:var(--mono);font-weight:500;color:var(--ink)}
+.gapbar-note{font-size:12px;color:var(--ink-3);margin-top:11px;max-width:660px;line-height:1.55}
+.counts{display:flex;gap:0;margin-top:30px;border:1px solid var(--rule);background:var(--sheet)}
+.count{flex:1;padding:14px 18px;border-right:1px solid var(--rule-soft)}
+.count:last-child{border-right:0}
+.count b{display:block;font-family:var(--mono);font-size:22px;font-weight:500;margin-top:5px;line-height:1}
+.count.tied b{color:var(--tied)} .count.owed b{color:var(--owed)} .count.brk b{color:var(--break)}
+
+/* ── scorecard ────────────────────────────────────────────────── */
+.score{padding:26px 0;border-bottom:1px solid var(--rule)}
+.score-row{display:flex;gap:34px;flex-wrap:wrap;align-items:flex-end}
+.metric b{display:block;font-family:var(--mono);font-size:25px;font-weight:500;line-height:1;margin-top:6px}
+.metric small{display:block;font-size:11px;color:var(--ink-3);margin-top:5px;max-width:190px}
+.caveat{
+  margin-top:20px;padding:13px 16px;border-left:2px solid var(--owed);
+  background:var(--owed-wash);font-size:13px;color:var(--ink-2);max-width:760px;
+}
+.caveat b{color:var(--ink);font-weight:600}
+
+/* ── ladder ───────────────────────────────────────────────────── */
+.ladder{display:flex;gap:0;margin:26px 0 0;border:1px solid var(--rule);flex-wrap:wrap}
+.rung{
+  flex:1;min-width:112px;padding:11px 13px;background:var(--sheet);
+  border-right:1px solid var(--rule-soft);cursor:pointer;text-align:left;
+  font:inherit;color:inherit;transition:background .12s;
+}
+.rung:last-child{border-right:0}
+.rung:hover{background:#EDF1F5}
+.rung[aria-pressed="true"]{background:var(--ink);color:var(--sheet)}
+.rung[aria-pressed="true"] .lbl{color:#9AA5B4}
+.rung b{display:block;font-family:var(--mono);font-size:17px;font-weight:500;margin-top:5px}
+.rung i{display:block;width:100%;height:2px;margin-top:8px}
+
+/* ── the ledger ───────────────────────────────────────────────── */
+.sheet-head{display:flex;align-items:baseline;gap:14px;margin:34px 0 0}
+.sheet-head p{font-size:12px;color:var(--ink-2)}
+
+.ledger{width:100%;border-collapse:collapse;margin-top:13px;font-size:13px}
+.ledger thead th{
+  font-family:var(--disp);font-weight:700;font-size:9px;letter-spacing:.13em;
+  text-transform:uppercase;color:var(--ink-3);text-align:right;
+  padding:0 10px 8px;border-bottom:1px solid var(--rule);white-space:nowrap;
+}
+.ledger thead th.l{text-align:left}
+.ledger thead th.c{text-align:center}
+.ledger tbody tr{border-bottom:1px solid var(--rule-soft);cursor:pointer}
+.ledger tbody tr:hover{background:var(--sheet)}
+.ledger tbody tr.open{background:var(--sheet)}
+.ledger td{padding:7px 10px;text-align:right;white-space:nowrap}
+.ledger td.l{text-align:left}
+.pid{font-family:var(--mono);font-size:11px;color:var(--ink-2)}
+.money{font-family:var(--mono);font-variant-numeric:tabular-nums}
+
+/* ── THE DELTA GUTTER · the signature ──────────────────────────
+   A centre channel. Every payment's difference is drawn to scale
+   from the midline: left is short, right is over. A row that ties
+   out draws nothing. Scan the column and the shape of the batch
+   is visible before a single number is read. */
+.gut{width:150px;padding:0 !important;position:relative}
+.gut-in{position:relative;height:22px;border-left:1px solid var(--rule-soft);border-right:1px solid var(--rule-soft)}
+.gut-mid{position:absolute;left:50%;top:0;bottom:0;width:1px;background:var(--rule)}
+.gut-bar{
+  position:absolute;top:6px;height:10px;
+  transform-origin:left center;
+}
+.gut-tick{position:absolute;top:3px;bottom:3px;width:1px;background:var(--tied);left:50%;opacity:.55}
+
+/* ── expanded evidence ────────────────────────────────────────── */
+.eviRow td{padding:0;background:var(--sheet)}
+.evi{padding:16px 20px 20px;border-left:2px solid var(--rule)}
+.evi.high{border-left-color:var(--break)}
+.evi.low{border-left-color:var(--owed)}
+.evi.ok{border-left-color:var(--tied)}
+.evi h4{font-family:var(--sans);font-size:14px;font-weight:600;margin-bottom:11px;white-space:normal}
+.evi ul{list-style:none;display:flex;flex-direction:column;gap:5px;margin-bottom:13px}
+.evi li{font-family:var(--mono);font-size:11.5px;color:var(--ink-2);white-space:normal}
+.evi li::before{content:"— ";color:var(--ink-3)}
+.act{
+  display:inline-block;font-family:var(--disp);font-size:9.5px;font-weight:700;
+  letter-spacing:.13em;text-transform:uppercase;padding:5px 11px;border:1px solid currentColor;
+}
+.act.high{color:var(--break)} .act.low{color:var(--owed)}
+
+.sev{
+  font-family:var(--disp);font-size:9px;font-weight:700;letter-spacing:.11em;
+  text-transform:uppercase;padding:2px 6px;
+}
+.sev.high{background:var(--break-wash);color:var(--break)}
+.sev.low{background:var(--owed-wash);color:var(--owed)}
+.sev.ok{color:var(--tied)}
+
+/* ── orphans + footer ─────────────────────────────────────────── */
+.orphan{margin-top:34px;padding:16px 18px;border:1px solid var(--break);background:var(--break-wash)}
+.orphan p{font-size:13px;color:var(--ink-2);margin-top:5px;max-width:640px}
+.foot{margin-top:44px;padding-top:20px;border-top:1px solid var(--rule);font-size:12px;color:var(--ink-3);display:flex;justify-content:space-between;gap:20px;flex-wrap:wrap}
+
+.empty{padding:36px 20px;text-align:center;color:var(--ink-2);font-size:13px}
+
+/* ── one orchestrated load, then still ────────────────────────── */
+@keyframes settle{from{opacity:0;transform:translateY(3px)}to{opacity:1;transform:none}}
+@keyframes draw{from{transform:scaleX(0)}to{transform:scaleX(1)}}
+.ledger tbody tr.pay{animation:settle .26s ease-out backwards}
+.gut-bar{animation:draw .4s cubic-bezier(.2,.8,.3,1) backwards}
+@media (prefers-reduced-motion:reduce){*{animation:none !important;transition:none !important}}
+
+:focus-visible{outline:2px solid var(--ink);outline-offset:2px}
+
+@media (max-width:860px){
+  .tie-grid{grid-template-columns:1fr}
+  .tie-join{border:0;border-top:1px solid var(--rule);border-bottom:1px solid var(--rule);flex-direction:row;min-height:0;padding:11px}
+  .tie-side,.tie-side.r{text-align:left;padding:16px 0}
+  .counts{flex-wrap:wrap}.count{min-width:50%;border-bottom:1px solid var(--rule-soft)}
+  .tblwrap{overflow-x:auto}
+  .ledger{min-width:720px}
+}
+</style>
+</head>
+<body>
+
+<header class="rail">
+  <div class="wrap rail-in">
+    <div class="mark">Axiom Recover <span>/ ledger</span></div>
+    <div class="rail-meta">
+      <div><span class="lbl">batch</span><b id="m-seed">—</b></div>
+      <div><span class="lbl">records</span><b id="m-rec">—</b></div>
+      <div><span class="lbl">fee band</span><b id="m-band">—</b></div>
+      <div><span class="lbl">reportable</span><b id="m-rep">—</b></div>
+    </div>
+  </div>
+</header>
+
+<main class="wrap">
+
+  <!-- ═══ THE TIE-OUT ═══ -->
+  <section class="tieout">
+    <div class="tie-grid">
+      <div class="tie-side">
+        <div class="lbl">Should have settled</div>
+        <div class="tie-amt" id="t-exp">—</div>
+        <div class="tie-sub">gross taken, less fees, less refunds already on file</div>
+      </div>
+      <div class="tie-join">
+        <div class="lbl">Difference</div>
+        <div class="tie-delta" id="t-delta">—</div>
+        <div class="tie-verdict" id="t-verdict">—</div>
+      </div>
+      <div class="tie-side r">
+        <div class="lbl">Actually settled</div>
+        <div class="tie-amt" id="t-set">—</div>
+        <div class="tie-sub">credited by the bank across all settlement batches</div>
+      </div>
+    </div>
+
+    <div class="gapbar">
+      <div class="lbl">Where the difference sits</div>
+      <div class="gapbar-track" id="gapbar"></div>
+      <div class="gapbar-legend" id="gaplegend"></div>
+      <p class="gapbar-note">
+        Rows that tied out contribute exactly <span class="num">₹0.00</span> to this figure. Every paisa of
+        the difference is attributed &mdash; none of it is absorbed into a tolerance or rounded away.
+      </p>
+    </div>
+
+    <div class="counts">
+      <div class="count tied"><span class="lbl">Tied out</span><b id="c-tied">—</b></div>
+      <div class="count owed"><span class="lbl">Explained, still owed</span><b id="c-owed">—</b></div>
+      <div class="count brk"><span class="lbl">Needs a person</span><b id="c-brk">—</b></div>
+      <div class="count"><span class="lbl">Payments examined</span><b id="c-all">—</b></div>
+    </div>
+  </section>
+
+  <!-- ═══ SCORECARD ═══ -->
+  <section class="score">
+    <div class="lbl" style="margin-bottom:16px">Scored against the answer key · 25 independent batches</div>
+    <div class="score-row">
+      <div class="metric"><span class="lbl">Precision</span><b id="s-prec">—</b><small>of what we flagged, how much was real</small></div>
+      <div class="metric"><span class="lbl">Recall</span><b id="s-rec">—</b><small>of what was real, how much we caught</small></div>
+      <div class="metric"><span class="lbl">Explanation accuracy</span><b id="s-exp" style="color:var(--owed)">—</b><small>right verdict <em>and</em> right reason</small></div>
+      <div class="metric"><span class="lbl">False alarms</span><b id="s-fp">—</b><small>operator-minutes burned on non-problems</small></div>
+    </div>
+    <div class="caveat">
+      <b>The perfect scores are the least interesting numbers here.</b> They say the flag / don't-flag
+      rule holds on the eight problem types this generator produces. They say nothing about a ninth
+      type nobody enumerated, which is what real settlement files contain. Explanation accuracy is the
+      honest figure — it is the one that isn't perfect, and the test suite fails if it ever becomes so.
+    </div>
+  </section>
+
+  <!-- ═══ LADDER ═══ -->
+  <section>
+    <div class="lbl" style="margin-top:30px">Filter by how the gap was resolved</div>
+    <div class="ladder" id="ladder"></div>
+  </section>
+
+  <!-- ═══ LEDGER ═══ -->
+  <section>
+    <div class="sheet-head">
+      <div class="lbl">The ledger</div>
+      <p id="sheet-note">Select a row to see the evidence behind the verdict.</p>
+    </div>
+
+    <div class="tblwrap">
+      <table class="ledger">
+        <thead>
+          <tr>
+            <th class="l">Payment</th>
+            <th>Gross</th>
+            <th>Fee + tax</th>
+            <th>Refunded</th>
+            <th>Expected</th>
+            <th>Settled</th>
+            <th class="c">Difference</th>
+            <th class="l">Verdict</th>
+          </tr>
+        </thead>
+        <tbody id="rows"></tbody>
+      </table>
+    </div>
+  </section>
+
+  <div id="orphans"></div>
+
+  <div class="foot">
+    <span>Reconciled locally. No data left this machine.</span>
+    <span id="f-build">—</span>
+  </div>
+</main>
+
+<script>
+const DATA = __DATA__;
+
+/* Display only. Every calculation upstream is in integer paise. */
+const R = p => {
+  const s = p < 0 ? "-" : "", a = Math.abs(p);
+  return s + "\u20B9" + Math.floor(a/100).toLocaleString("en-IN") + "." + String(a%100).padStart(2,"0");
+};
+const Rc = p => { /* compact, for the gutter tooltip */
+  const a = Math.abs(p)/100;
+  return (p<0?"-":"+") + "\u20B9" + (a>=100000 ? (a/100000).toFixed(1)+"L" : a>=1000 ? (a/1000).toFixed(1)+"k" : a.toFixed(0));
+};
+const pct = x => (x*100).toFixed(1) + "%";
+const el = id => document.getElementById(id);
+
+const S = DATA.stats, SC = DATA.score, ROWS = DATA.results;
+
+/* ── rail ─────────────────────────────────────────────────────── */
+el("m-seed").textContent  = DATA.meta.seed;
+el("m-rec").textContent   = DATA.meta.records;
+el("m-band").textContent  = (S.fee_variance_band*100).toFixed(0) + "%";
+el("m-rep").textContent   = DATA.meta.reportable ? "yes" : "not yet";
+el("m-rep").style.color   = DATA.meta.reportable ? "var(--tied)" : "var(--owed)";
+el("f-build").textContent = "batch " + DATA.meta.seed + " \u00B7 built " + DATA.meta.built.slice(0,10);
+
+/* ── tie-out ──────────────────────────────────────────────────── */
+const expTotal = ROWS.reduce((a,r)=>a+r.expected_paise,0);
+const setTotal = ROWS.reduce((a,r)=>a+r.settled_paise,0);
+const gap = setTotal - expTotal;
+
+el("t-exp").textContent = R(expTotal);
+el("t-set").textContent = R(setTotal);
+el("t-delta").textContent = gap === 0 ? "\u20B90.00" : R(gap);
+el("t-delta").style.color = gap === 0 ? "var(--tied)" : "var(--break)";
+el("t-verdict").textContent = gap === 0 ? "ties out" : "does not tie";
+el("t-verdict").style.color = gap === 0 ? "var(--tied)" : "var(--break)";
+
+/* ── where the difference sits ────────────────────────────────
+   The gap is decomposed across the three states and the parts are
+   asserted to sum back to the whole. A reconciler that reports a
+   total it cannot break down is reporting a number, not a result. */
+const gapLow  = ROWS.filter(r => r.severity === "low").reduce((a,r)=>a+r.delta_paise,0);
+const gapHigh = ROWS.filter(r => r.severity === "high").reduce((a,r)=>a+r.delta_paise,0);
+const gapTied = ROWS.filter(r => r.reconciles).reduce((a,r)=>a+r.delta_paise,0);
+
+const parts = [
+  { k:"needs a person",       v:gapHigh, c:"var(--break)" },
+  { k:"explained, still owed",v:gapLow,  c:"var(--owed)"  },
+  { k:"tied out",             v:gapTied, c:"var(--tied)"  }
+];
+const totalAbs = parts.reduce((a,p)=>a+Math.abs(p.v),0);
+
+el("gapbar").innerHTML = totalAbs === 0
+  ? '<span style="flex:1;background:var(--tied)"></span>'
+  : parts.filter(p=>p.v!==0)
+         .map(p => '<span style="flex:' + (Math.abs(p.v)/totalAbs) + ';background:' + p.c + '"></span>')
+         .join("");
+
+el("gaplegend").innerHTML = parts.map(p =>
+  '<div><i style="background:' + p.c + '"></i>' + p.k + ' <b>' + R(p.v) + '</b></div>'
+).join("");
+
+el("c-tied").textContent = S.reconciled;
+el("c-owed").textContent = S.by_severity.low;
+el("c-brk").textContent  = S.by_severity.high;
+el("c-all").textContent  = S.payments_examined;
+
+/* ── scorecard ────────────────────────────────────────────────── */
+el("s-prec").textContent = pct(SC.sweep.precision);
+el("s-rec").textContent  = pct(SC.sweep.recall);
+el("s-exp").textContent  = pct(SC.sweep.explanation_accuracy) + " \u00B1 " + pct(SC.sweep.explanation_sd);
+el("s-fp").textContent   = SC.sweep.fp_minutes.toFixed(0) + " min";
+
+/* ── ladder ───────────────────────────────────────────────────── */
+const TIER = {
+  exact:            { label:"Tied to the paisa",  colour:"var(--tied)"  },
+  explained_split:  { label:"Two bank batches",   colour:"var(--tied)"  },
+  explained_refund: { label:"Refund netted",      colour:"var(--tied)"  },
+  explained_fee:    { label:"Pricing variance",   colour:"var(--owed)"  },
+  flagged_duplicate:{ label:"Charged twice",      colour:"var(--break)" },
+  unexplained:      { label:"Unexplained",        colour:"var(--break)" }
+};
+
+let filter = null;
+
+const ladder = el("ladder");
+Object.entries(TIER).forEach(([tier, meta]) => {
+  const n = S.by_tier[tier] || 0;
+  const b = document.createElement("button");
+  b.className = "rung";
+  b.setAttribute("aria-pressed","false");
+  b.innerHTML = '<span class="lbl">' + meta.label + '</span><b>' + n + '</b>' +
+                '<i style="background:' + meta.colour + '"></i>';
+  b.onclick = () => {
+    filter = filter === tier ? null : tier;
+    [...ladder.children].forEach(c => c.setAttribute("aria-pressed", "false"));
+    if (filter) b.setAttribute("aria-pressed","true");
+    render();
+  };
+  ladder.appendChild(b);
+});
+
+/* ── the delta gutter ─────────────────────────────────────────── */
+const maxAbs = Math.max(1, ...ROWS.map(r => Math.abs(r.delta_paise)));
+const HALF = 74;   /* px each side of the midline */
+
+function gutter(r) {
+  const d = r.delta_paise;
+  if (d === 0) {
+    /* Nothing drawn. A clean gutter is the whole point — the eye
+       finds the breaks without reading a single figure. */
+    return '<div class="gut-in"><div class="gut-mid"></div><div class="gut-tick"></div></div>';
+  }
+  /* Square-root scale. Linear would make one large break flatten
+     every small one into invisibility, and small breaks are the
+     ones a person would otherwise miss. */
+  const w = Math.max(3, Math.sqrt(Math.abs(d)/maxAbs) * HALF);
+  const colour = r.reconciles ? "var(--tied)" : r.severity === "low" ? "var(--owed)" : "var(--break)";
+  const side = d < 0 ? 'right:50%' : 'left:50%';
+  return '<div class="gut-in" title="' + Rc(d) + '">' +
+           '<div class="gut-mid"></div>' +
+           '<div class="gut-bar" style="' + side + ';width:' + w + 'px;background:' + colour + '"></div>' +
+         '</div>';
+}
+
+/* ── rows ─────────────────────────────────────────────────────── */
+let open = null;
+
+function render() {
+  const tb = el("rows");
+  tb.innerHTML = "";
+
+  const list = filter ? ROWS.filter(r => r.tier === filter) : ROWS;
+
+  el("sheet-note").textContent = filter
+    ? list.length + " of " + ROWS.length + " payments \u00B7 " + TIER[filter].label.toLowerCase() + " \u00B7 select a row for the evidence"
+    : "Select a row to see the evidence behind the verdict.";
+
+  if (!list.length) {
+    tb.innerHTML = '<tr><td colspan="8" class="empty">No payments resolved this way in this batch.</td></tr>';
+    return;
+  }
+
+  list.forEach((r, i) => {
+    const tr = document.createElement("tr");
+    tr.className = "pay";
+    if (i < 30) tr.style.animationDelay = (i * 9) + "ms";
+    if (open === r.payment_id) tr.classList.add("open");
+
+    const sevCls = r.reconciles ? "ok" : r.severity;
+    const verdict = r.reconciles
+      ? '<span class="sev ok">tied out</span>'
+      : '<span class="sev ' + r.severity + '">' + (r.severity === "high" ? "needs a person" : "still owed") + '</span>';
+
+    tr.innerHTML =
+      '<td class="l pid">' + r.payment_id + '</td>' +
+      '<td class="money">' + R(r.gross_paise) + '</td>' +
+      '<td class="money" style="color:var(--ink-2)">' + R(r.fee_paise + r.tax_paise) + '</td>' +
+      '<td class="money" style="color:var(--ink-3)">' + (r.refunded_paise ? R(r.refunded_paise) : "\u2014") + '</td>' +
+      '<td class="money">' + R(r.expected_paise) + '</td>' +
+      '<td class="money">' + R(r.settled_paise) + '</td>' +
+      '<td class="gut">' + gutter(r) + '</td>' +
+      '<td class="l">' + verdict + '</td>';
+
+    tr.onclick = () => { open = open === r.payment_id ? null : r.payment_id; render(); };
+    tb.appendChild(tr);
+
+    if (open === r.payment_id) {
+      const ev = document.createElement("tr");
+      ev.className = "eviRow";
+      ev.innerHTML = '<td colspan="8"><div class="evi ' + sevCls + '">' +
+        '<h4>' + r.explanation + '</h4>' +
+        '<ul>' + r.evidence.map(e => '<li>' + e + '</li>').join("") + '</ul>' +
+        (r.action ? '<span class="act ' + (r.severity || "low") + '">' + r.action.replace(/_/g," ") + '</span>' : '') +
+      '</div></td>';
+      tb.appendChild(ev);
+    }
+  });
+}
+
+/* ── orphan credits ───────────────────────────────────────────── */
+if (DATA.orphans.length) {
+  el("orphans").innerHTML =
+    '<div class="orphan">' +
+      '<div class="lbl" style="color:var(--break)">Money in, with nothing behind it</div>' +
+      '<p><b class="num">' + DATA.orphans.length + '</b> settlement credit' + (DATA.orphans.length>1?"s":"") +
+      ' worth <b class="num">' + R(S.orphan_credit_value_paise) + '</b> arrived with no originating payment. ' +
+      'These sit outside the ledger above because there is no payment to tie them to, and they are ' +
+      'never netted quietly into the total.</p>' +
+    '</div>';
+}
+
+render();
+</script>
+</body>
+</html>

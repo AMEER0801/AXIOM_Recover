@@ -3,14 +3,20 @@
   "version": "0.1.0",
   "private": true,
   "description": "Ingestion, synthetic data and the frozen response model for AXIOM RECOVER.",
-  "engines": { "node": ">=22" },
+  "engines": {
+    "node": ">=22"
+  },
   "type": "commonjs",
   "scripts": {
     "start": "node index.js",
     "seed": "node seed.js --seed 42 --records 200 --out ./data",
     "freeze": "node freeze.js",
     "check": "node freeze.js --check",
-    "test": "node test/smoke.js"
+    "test": "node test/smoke.js",
+    "recon": "node recon.js --data ./data",
+    "sweep": "node sweep.js --seeds 25",
+    "sweep:band": "node sweep.js --seeds 25 --band-sweep",
+    "ui": "node ../ui/build-ui.js --seed 42 --records 200 --sweep 25"
   },
   "dependencies": {}
 }

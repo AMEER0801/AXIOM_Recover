@@ -292,5 +292,99 @@ t("the intervention vocabulary is frozen", () => {
   assert.throws(() => { INTERVENTIONS.push("SOMETHING_NEW"); });
 });
 
+console.log("\nreconciler");
+
+const { reconcile, score } = require("../recon");
+
+t("a fee variance is flagged, not explained away", () => {
+  const { ledger, truth } = generate({ seed: 42, records: 200 });
+  const out = reconcile(ledger);
+  const feeCases = Object.entries(truth.payments).filter(([, v]) => v.break === "fee_variance");
+  assert.ok(feeCases.length > 0, "batch contains no fee variance to test");
+  for (const [pid] of feeCases) {
+    const r = out.results.find((x) => x.payment_id === pid);
+    assert.strictEqual(r.reconciles, false, `${pid} was explained away instead of queued`);
+    assert.strictEqual(r.severity, "low", `${pid} should be low severity, not ${r.severity}`);
+  }
+});
+
+t("a split settlement is NOT flagged — it reconciles as a pair", () => {
+  const { ledger, truth } = generate({ seed: 42, records: 200 });
+  const out = reconcile(ledger);
+  const splits = Object.entries(truth.payments).filter(([, v]) => v.break === "timing_split");
+  assert.ok(splits.length > 0);
+  for (const [pid] of splits) {
+    const r = out.results.find((x) => x.payment_id === pid);
+    assert.strictEqual(r.reconciles, true, `${pid} was falsely flagged`);
+    assert.strictEqual(r.tier, "explained_split");
+  }
+});
+
+t("a netted refund is NOT flagged", () => {
+  const { ledger, truth } = generate({ seed: 42, records: 200 });
+  const out = reconcile(ledger);
+  const refunds = Object.entries(truth.payments).filter(([, v]) => v.break === "refund_netting");
+  assert.ok(refunds.length > 0);
+  for (const [pid] of refunds) {
+    const r = out.results.find((x) => x.payment_id === pid);
+    assert.strictEqual(r.reconciles, true, `${pid} was falsely flagged`);
+  }
+});
+
+t("both halves of a duplicate pair are flagged, with roles", () => {
+  const { ledger, truth } = generate({ seed: 42, records: 200 });
+  const out = reconcile(ledger);
+  const dupes = Object.entries(truth.payments).filter(([, v]) => v.break === "duplicate_payment");
+  assert.ok(dupes.length > 0);
+  for (const [pid, tr] of dupes) {
+    const orig = out.results.find((x) => x.payment_id === pid);
+    const dup = out.results.find((x) => x.payment_id === tr.duplicate_payment_id);
+    assert.strictEqual(orig.tier, "flagged_duplicate");
+    assert.strictEqual(dup.tier, "flagged_duplicate");
+    assert.ok(orig.evidence.some((e) => e.includes("original")));
+    assert.ok(dup.evidence.some((e) => e.includes("duplicate")));
+  }
+});
+
+t("an orphan credit is surfaced separately, not silently dropped", () => {
+  const { ledger } = generate({ seed: 42, records: 200 });
+  const out = reconcile(ledger);
+  assert.ok(out.orphanCredits.length > 0);
+  assert.ok(out.stats.orphan_credit_value_paise > 0);
+});
+
+t("every exception carries a severity and a named next action", () => {
+  const { ledger } = generate({ seed: 42, records: 200 });
+  const out = reconcile(ledger);
+  for (const r of out.results.filter((x) => !x.reconciles)) {
+    assert.ok(["high", "low"].includes(r.severity), `${r.payment_id} has severity ${r.severity}`);
+    assert.ok(typeof r.action === "string" && r.action.length, `${r.payment_id} has no action`);
+    assert.ok(r.evidence.length > 0, `${r.payment_id} has no evidence`);
+  }
+});
+
+t("the verdict score holds across 10 independent batches", () => {
+  for (let i = 0; i < 10; i++) {
+    const seed = 500 + i * 13;
+    const { ledger, truth } = generate({ seed, records: 200 });
+    const s = score(reconcile(ledger), truth);
+    assert.strictEqual(s.confusion.fp, 0, `seed ${seed} produced ${s.confusion.fp} false positives`);
+    assert.strictEqual(s.confusion.fn, 0, `seed ${seed} produced ${s.confusion.fn} false negatives`);
+  }
+});
+
+t("explanation accuracy is NOT perfect — the fee/mismatch overlap is real", () => {
+  let anyImperfect = false;
+  for (let i = 0; i < 10; i++) {
+    const { ledger, truth } = generate({ seed: 500 + i * 13, records: 200 });
+    const s = score(reconcile(ledger), truth);
+    if (s.explanation_accuracy < 1) anyImperfect = true;
+  }
+  /* If this ever starts passing at 100% across every batch, the band
+     has been tuned to the answer key and the metric has stopped
+     measuring anything. */
+  assert.ok(anyImperfect, "explanation accuracy is perfect everywhere — suspect the threshold was fitted");
+});
+
 console.log(`\n${pass} passed, ${fail} failed\n`);
 process.exit(fail ? 1 : 0);
