@@ -1,0 +1,94 @@
+{
+  "_README": "Every leaf in this file MUST have a `value` and a non-empty `source`. The eval harness refuses to emit a reportable number while any `source` is empty. Fill these from published material before Sept 1 — a cited constraint is worth more to a reviewer than a confident guess.",
+  "_units": "Probabilities are 0..1. Money is integer paise. Time is hours.",
+
+  "retry_success_by_attempt": {
+    "_note": "P(a retry of a previously failed charge succeeds), indexed by attempt number.",
+    "card": {
+      "1": { "value": 0.22, "source": "" },
+      "2": { "value": 0.13, "source": "" },
+      "3": { "value": 0.07, "source": "" },
+      "4+": { "value": 0.03, "source": "" }
+    },
+    "emandate": {
+      "1": { "value": 0.31, "source": "" },
+      "2": { "value": 0.18, "source": "" },
+      "3": { "value": 0.09, "source": "" },
+      "4+": { "value": 0.04, "source": "" }
+    },
+    "upi": {
+      "1": { "value": 0.27, "source": "" },
+      "2": { "value": 0.15, "source": "" },
+      "3": { "value": 0.08, "source": "" },
+      "4+": { "value": 0.03, "source": "" }
+    }
+  },
+
+  "retry_timing_multiplier": {
+    "_note": "Multiplier on retry_success_by_attempt as a function of hours waited since the failure. Captures salary-cycle and balance-replenishment effects.",
+    "lt_6h": { "value": 0.55, "source": "" },
+    "6_24h": { "value": 0.85, "source": "" },
+    "24_72h": { "value": 1.0, "source": "" },
+    "72_168h": { "value": 1.12, "source": "" },
+    "gt_168h": { "value": 0.7, "source": "" }
+  },
+
+  "failure_reason_recoverability": {
+    "_note": "Multiplier by declared failure reason. A hard decline is not a soft decline; treating them alike is the single most common flaw in retry logic.",
+    "insufficient_funds": { "value": 1.25, "source": "" },
+    "gateway_error": { "value": 1.6, "source": "" },
+    "issuer_down": { "value": 1.7, "source": "" },
+    "payment_timeout": { "value": 1.45, "source": "" },
+    "authentication_failed": { "value": 0.9, "source": "" },
+    "card_expired": { "value": 0.05, "source": "" },
+    "card_blocked": { "value": 0.05, "source": "" },
+    "mandate_revoked": { "value": 0.0, "source": "" },
+    "invalid_account": { "value": 0.0, "source": "" }
+  },
+
+  "nudge_conversion": {
+    "_note": "P(customer pays within the response window after a non-charging nudge). Applied instead of retry probability, not on top of it.",
+    "payment_link_sms": { "value": 0.09, "source": "" },
+    "payment_link_whatsapp": { "value": 0.16, "source": "" },
+    "dunning_email": { "value": 0.06, "source": "" },
+    "voice_nudge_regional": { "value": 0.21, "source": "" }
+  },
+
+  "locale_uplift": {
+    "_note": "Multiplier on nudge_conversion when the message is in the customer's own language. This is the project's central India-specific claim and needs the strongest citation in the file.",
+    "matched_language": { "value": 1.34, "source": "" },
+    "english_default": { "value": 1.0, "source": "" }
+  },
+
+  "opt_out_hazard": {
+    "_note": "P(customer opts out permanently) per contact. Opt-out is not a neutral outcome — it destroys all future recovery on that customer, so it is priced, not ignored.",
+    "payment_link_sms": { "value": 0.012, "source": "" },
+    "payment_link_whatsapp": { "value": 0.019, "source": "" },
+    "dunning_email": { "value": 0.006, "source": "" },
+    "voice_nudge_regional": { "value": 0.034, "source": "" },
+    "per_extra_contact_multiplier": { "value": 1.6, "source": "" }
+  },
+
+  "intervention_cost_paise": {
+    "_note": "Direct cost of firing one intervention.",
+    "retry_charge": { "value": 0, "source": "" },
+    "payment_link_sms": { "value": 25, "source": "" },
+    "payment_link_whatsapp": { "value": 80, "source": "" },
+    "dunning_email": { "value": 2, "source": "" },
+    "voice_nudge_regional": { "value": 320, "source": "" },
+    "escalate_human_minutes": { "value": 6, "source": "" },
+    "human_cost_per_hour_paise": { "value": 35000, "source": "" }
+  },
+
+  "opt_out_loss_paise": {
+    "_note": "Expected forgone future recovery from one opted-out customer. Without this number an agent that spams everyone looks optimal.",
+    "value": 48000,
+    "source": ""
+  },
+
+  "response_window_hours": {
+    "_note": "How long after an intervention the outcome is scored. Beyond this it is not attributable.",
+    "value": 72,
+    "source": ""
+  }
+}

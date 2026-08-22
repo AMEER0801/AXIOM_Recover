@@ -1,0 +1,19 @@
+# Dependencies
+node_modules/
+
+# Environment / secrets — never commit real keys
+.env
+.env.*
+!.env.example
+
+# Generated test data (regenerate with: npm run seed)
+server/data/*.json
+server/data/*.jsonl
+!server/data/.gitkeep
+
+# OS / editor noise
+.DS_Store
+Thumbs.db
+*.log
+.vscode/
+.idea/
