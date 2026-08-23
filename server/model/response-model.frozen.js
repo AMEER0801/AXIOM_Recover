@@ -178,6 +178,21 @@ function resolve({ record, intervention, attemptNo, hoursSinceFail, messageLocal
 
     const method = record.method === "emandate" ? "emandate"
                  : record.method === "upi" ? "upi" : "card";
+
+    /* A paused or revoked e-mandate cannot be charged. Not "unlikely
+       to succeed" — there is no live authorisation for a retry to
+       use. Modelling this only through the recoverability multiplier
+       would let an occasional draw "succeed" whenever someone
+       recalibrates that number for other reasons and forgets this
+       one has to stay at exactly zero. This is a physical fact about
+       the mandate's state, so it is enforced as a hard rule rather
+       than left to a number that could drift. */
+    const MANDATE_BLOCKED = new Set(["mandate_revoked", "mandate_paused_by_customer", "mandate_paused_by_business"]);
+    if (method === "emandate" && MANDATE_BLOCKED.has(reason)) {
+      out.p_pay = 0;
+      return out;
+    }
+
     const base = v(rates, `retry_success_by_attempt.${method}.${attemptBucket(attemptNo)}`);
     const timing = v(rates, `retry_timing_multiplier.${timingBucket(hoursSinceFail)}`);
 

@@ -60,7 +60,13 @@ const AT_RISK_MIX = {
 /* Failure reasons, split by how recoverable they actually are.
    A batch made only of soft declines would flatter any retry
    agent; a batch made only of hard declines would make every
-   agent look useless. Both are unrepresentative. */
+   agent look useless. Both are unrepresentative.
+
+   mandate_revoked's original 0.05 is split three ways rather than
+   left as one bucket, so that business-paused mandates — the case
+   that can ONLY be fixed by an action this project doesn't have
+   yet — actually appear in test batches instead of being averaged
+   away inside a generic "mandate" reason. */
 const REASON_MIX = {
   insufficient_funds: 0.26,
   gateway_error: 0.14,
@@ -69,7 +75,9 @@ const REASON_MIX = {
   authentication_failed: 0.16,
   card_expired: 0.10,
   card_blocked: 0.06,
-  mandate_revoked: 0.05,
+  mandate_revoked: 0.02,
+  mandate_paused_by_customer: 0.02,
+  mandate_paused_by_business: 0.01,
   invalid_account: 0.03,
 };
 
@@ -103,6 +111,11 @@ const REASON_TO_FAILURE = {
   card_expired:          { source: "customer", step: "payment_initiation",     code: "BAD_REQUEST_ERROR" },
   card_blocked:          { source: "bank",     step: "payment_authorization",  code: "BAD_REQUEST_ERROR" },
   mandate_revoked:       { source: "customer", step: "payment_initiation",     code: "BAD_REQUEST_ERROR" },
+  /* source: "customer" / "business" here is not a stylistic choice —
+     it is the field that determines who is capable of fixing the
+     record, and it is why these two are separate reasons at all. */
+  mandate_paused_by_customer: { source: "customer", step: "payment_initiation", code: "BAD_REQUEST_ERROR" },
+  mandate_paused_by_business: { source: "business", step: "payment_initiation", code: "BAD_REQUEST_ERROR" },
   invalid_account:       { source: "customer", step: "payment_initiation",     code: "BAD_REQUEST_ERROR" },
 };
 
@@ -180,12 +193,14 @@ function generate({ seed = 42, records = 200, days = 30, now = ANCHOR_EPOCH } = 
     let reason = null, failure = null;
     if (needsFailure) {
       reason = weighted(r, REASON_MIX);
-      /* An e-mandate cannot fail for card_expired, and a revoked
-         mandate cannot describe a one-off card payment. Emitting
+      /* An e-mandate cannot fail for card_expired, and a mandate
+         event of any kind cannot describe a one-off card or UPI
+         payment — mandates exist only on emandate. Emitting
          impossible pairs would let a detector "learn" an artefact
          of the generator instead of the domain. */
+      const MANDATE_REASON = new Set(["mandate_revoked", "mandate_paused_by_customer", "mandate_paused_by_business"]);
       if (method === "emandate" && (reason === "card_expired" || reason === "card_blocked")) reason = "mandate_revoked";
-      if (method !== "emandate" && reason === "mandate_revoked") reason = "insufficient_funds";
+      if (method !== "emandate" && MANDATE_REASON.has(reason)) reason = "insufficient_funds";
       if (method === "upi" && (reason === "card_expired" || reason === "card_blocked")) reason = "insufficient_funds";
       failure = { ...REASON_TO_FAILURE[reason], reason };
     }
@@ -227,6 +242,52 @@ function generate({ seed = 42, records = 200, days = 30, now = ANCHOR_EPOCH } = 
       raw: { simulated: true },
     });
   }
+
+  /* ── guaranteeing the rare mandate-pause reasons actually appear ──
+     Caught by testing at n=400, not by inspection: mandate_paused_by_business
+     has a 1% share, and only shows up at all when the same record
+     also happens to draw the emandate method (14% share) — a joint
+     probability of roughly 0.14%. A 400-record run drew zero of them.
+     Since the entire point of splitting this reason out was to make
+     it visible and testable, leaving its appearance to chance would
+     defeat the purpose of having added it.
+
+     This is the same failure mode as the BREAK_MIX fix above,
+     showing up in a different part of the generator. Rather than
+     reworking kind, method and reason into one joint stratified draw
+     — which would fight the declared shares of every other field —
+     this scans the at-risk records already generated for emandate
+     candidates that need a failure reason, and reassigns a seeded
+     minimum of them so each mandate reason appears at least once. If
+     no such candidate exists at all (only possible at very small n),
+     one failing record is converted outright rather than shipping a
+     batch that can never exercise this path. */
+  function ensureMandateReasonCoverage(atRiskRecords) {
+    const MANDATE_REASONS = ["mandate_revoked", "mandate_paused_by_customer", "mandate_paused_by_business"];
+    const withIdx = atRiskRecords.map((rec, idx) => ({ rec, idx }));
+    const candidates = withIdx.filter(({ rec }) => rec.method === "emandate" && rec.failure);
+    const forced = [];
+
+    MANDATE_REASONS.forEach((reason, n) => {
+      if (candidates.some(({ rec }) => rec.failure.reason === reason)) return;   // already present by chance
+
+      const rr = rngFor(seed, "mandate-coverage", n);
+      let target;
+      if (candidates.length) {
+        target = candidates[Math.floor(rr() * candidates.length)];
+      } else {
+        const anyFailing = withIdx.find(({ rec }) => rec.failure);
+        if (!anyFailing) return;             // n too small to contain any failure at all
+        anyFailing.rec.method = "emandate";
+        target = anyFailing;
+        candidates.push(target);
+      }
+      target.rec.failure = { ...REASON_TO_FAILURE[reason], reason };
+      forced.push(reason);
+    });
+    return forced;
+  }
+  const mandateReasonsForced = ensureMandateReasonCoverage(ledger);
 
   /* ── break assignment, stratified ───────────────────────────
      Measured on the first run: at n=200 the two rarest classes
@@ -427,6 +488,7 @@ function generate({ seed = 42, records = 200, days = 30, now = ANCHOR_EPOCH } = 
     seed, records,
     anchor_epoch: new Date(now).toISOString(),
     stratified_slots_forced: forced,
+    mandate_reasons_forced: mandateReasonsForced,
     generated: ledger.length,
     valid: clean.length,
     quarantined: quarantined.length,
@@ -471,6 +533,9 @@ if (require.main === module) {
   console.log(`  do-not-contact ....... ${s.dnc_customers}`);
   console.log(`  true exceptions ...... ${s.true_exceptions} (answer key in truth.json)`);
   console.log(`  break mix ............ ${Object.entries(s.break_mix_realised).map(([k, v]) => `${k}:${v}`).join("  ")}`);
+  if (s.mandate_reasons_forced.length) {
+    console.log(`  mandate coverage ..... forced: ${s.mandate_reasons_forced.join(", ")} (too rare to trust to chance at this n)`);
+  }
   console.log(`\n  re-run with the same --seed to reproduce this batch exactly.\n`);
 }
 

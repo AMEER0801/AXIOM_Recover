@@ -25,6 +25,8 @@ const { validateRecord, rupees } = require("../lib/schema");
 const { rngFor } = require("../lib/rng");
 const { generate } = require("../seed");
 const { resolve, INTERVENTIONS } = require("../model/response-model.frozen");
+const { classifyFailureReason } = require("../index.js");
+const { evaluateGates, GATE_NAMES, createAttemptLedger, createSpendTracker, createKillSwitch, withinQuietHours, DEFAULT_POLICY } = require("../gates");
 
 let pass = 0, fail = 0;
 function t(name, fn) {
@@ -384,6 +386,247 @@ t("explanation accuracy is NOT perfect — the fee/mismatch overlap is real", ()
      has been tuned to the answer key and the metric has stopped
      measuring anything. */
   assert.ok(anyImperfect, "explanation accuracy is perfect everywhere — suspect the threshold was fitted");
+});
+
+
+console.log("\nmandate pause distinction (Razorpay subscription semantics)");
+
+t("a customer-initiated pause cannot be charged, but CAN be nudged", () => {
+  const rates = JSON.parse(fs.readFileSync(path.join(__dirname, "..", "model", "base-rates.json"), "utf8"));
+  const rec = { event_id: "evt_mc", amount_paise: 100000, method: "emandate", failure: { reason: "mandate_paused_by_customer" }, customer: { locale: "en" } };
+  const retry = resolve({ record: rec, intervention: "RETRY_CHARGE", attemptNo: 1, hoursSinceFail: 48, messageLocale: "en", rates, seed: 10 });
+  const nudge = resolve({ record: rec, intervention: "PAYMENT_LINK_WHATSAPP", attemptNo: 1, hoursSinceFail: 48, messageLocale: "en", rates, seed: 10 });
+  assert.strictEqual(retry.p_pay, 0, "a paused mandate cannot be charged, regardless of who paused it");
+  assert.ok(nudge.p_pay > 0, "only the customer can resume their own pause, so a message to them can still work");
+});
+
+t("a business-initiated pause cannot be charged OR usefully nudged", () => {
+  const rates = JSON.parse(fs.readFileSync(path.join(__dirname, "..", "model", "base-rates.json"), "utf8"));
+  const rec = { event_id: "evt_mb", amount_paise: 100000, method: "emandate", failure: { reason: "mandate_paused_by_business" }, customer: { locale: "en" } };
+  const retry = resolve({ record: rec, intervention: "RETRY_CHARGE", attemptNo: 1, hoursSinceFail: 48, messageLocale: "en", rates, seed: 10 });
+  const nudge = resolve({ record: rec, intervention: "PAYMENT_LINK_WHATSAPP", attemptNo: 1, hoursSinceFail: 48, messageLocale: "en", rates, seed: 10 });
+  assert.strictEqual(retry.p_pay, 0);
+  assert.strictEqual(nudge.p_pay, 0, "the block is on the business side — messaging the customer cannot fix it, so escalation is the only correct move");
+});
+
+t("the charge block is a hard rule, not a probability — it survives even if recoverability is miscalibrated to 1.0", () => {
+  const rates = JSON.parse(fs.readFileSync(path.join(__dirname, "..", "model", "base-rates.json"), "utf8"));
+  const tampered = JSON.parse(JSON.stringify(rates));
+  tampered.failure_reason_recoverability.mandate_paused_by_business.value = 1.0;
+  const rec = { event_id: "evt_mt", amount_paise: 100000, method: "emandate", failure: { reason: "mandate_paused_by_business" }, customer: { locale: "en" } };
+  const retry = resolve({ record: rec, intervention: "RETRY_CHARGE", attemptNo: 1, hoursSinceFail: 48, messageLocale: "en", rates: tampered, seed: 10 });
+  assert.strictEqual(retry.p_pay, 0, "a physical impossibility must not depend on a number staying correctly calibrated");
+});
+
+t("mandate reasons never attach to a card or UPI payment in generated data", () => {
+  const { ledger } = generate({ seed: 77, records: 300 });
+  const bad = ledger.filter((r) => r.failure && ["mandate_revoked","mandate_paused_by_customer","mandate_paused_by_business"].includes(r.failure.reason) && r.method !== "emandate");
+  assert.deepStrictEqual(bad, []);
+});
+
+t("the rare mandate_paused_by_business reason is guaranteed to appear, not left to a 0.14% draw", () => {
+  const { ledger, truth } = generate({ seed: 42, records: 200 });
+  const present = ledger.some((r) => r.failure && r.failure.reason === "mandate_paused_by_business");
+  assert.ok(present, "mandate_paused_by_business did not appear — the coverage guarantee regressed");
+  /* Whether it needed forcing or showed up by chance, the batch is
+     honest about which happened — this asserts the disclosure
+     mechanism itself works, not just the outcome. */
+  assert.ok(Array.isArray(truth.summary.mandate_reasons_forced));
+});
+
+console.log("\nwebhook classifier — real Razorpay field names");
+
+t("pause_initiated_by: self maps to the customer-paused reason", () => {
+  assert.strictEqual(classifyFailureReason({ pause_initiated_by: "self" }, "subscription_halted"), "mandate_paused_by_customer");
+});
+
+t("any other pause_initiated_by value maps to the business-paused reason", () => {
+  assert.strictEqual(classifyFailureReason({ pause_initiated_by: "ops_console" }, "subscription_halted"), "mandate_paused_by_business");
+});
+
+t("an exact, known error_reason is used as-is", () => {
+  assert.strictEqual(classifyFailureReason({ error_reason: "issuer_down" }, "payment_failed"), "issuer_down");
+});
+
+t("falls back to keyword matching on error_description when error_reason is absent or unknown", () => {
+  assert.strictEqual(classifyFailureReason({ error_description: "insufficient balance in account" }, "payment_failed"), "insufficient_funds");
+  assert.strictEqual(classifyFailureReason({ error_description: "the card has expired" }, "payment_failed"), "card_expired");
+});
+
+t("an unclassifiable payload gets a stated default, not a thrown error", () => {
+  assert.strictEqual(classifyFailureReason({}, "payment_failed"), "payment_timeout");
+});
+
+
+console.log("\ngates — the money firewall");
+
+const gRates = JSON.parse(fs.readFileSync(path.join(__dirname, "..", "model", "base-rates.json"), "utf8"));
+const gRecord = (over = {}) => ({
+  event_id: "evt_g", entity: { type: "payment", id: "pay_g1" },
+  amount_paise: 50000, method: "upi",
+  customer: { dnc: false, locale: "en" },
+  failure: { reason: "insufficient_funds" },
+  ...over,
+});
+const gFresh = () => ({ killSwitch: createKillSwitch(), attempts: createAttemptLedger(), spend: createSpendTracker() });
+const IN_WINDOW = new Date("2026-08-23T09:00:00.000Z");     // 14:30 IST
+const OUT_OF_WINDOW = new Date("2026-08-22T20:30:00.000Z"); // 02:00 IST
+
+t("throws rather than silently proceeding when a required wire-up is missing", () => {
+  const { attempts, spend } = gFresh();
+  assert.throws(() => evaluateGates({ record: gRecord(), proposedAction: "RETRY_CHARGE", rates: gRates, attempts, spend, now: IN_WINDOW }), /killSwitch.*required/);
+});
+
+t("every gate produces exactly one trace entry, every time, pass or block", () => {
+  const { killSwitch, attempts, spend } = gFresh();
+  const r = evaluateGates({ record: gRecord(), proposedAction: "PAYMENT_LINK_WHATSAPP", rates: gRates, killSwitch, attempts, spend, now: IN_WINDOW });
+  assert.deepStrictEqual(r.trace.map((t) => t.gate), GATE_NAMES);
+  assert.ok(r.trace.every((t) => t.result === "pass" || t.result === "block"));
+  assert.ok(r.trace.every((t) => typeof t.detail === "string" && t.detail.length > 0));
+});
+
+t("kill switch blocks unconditionally and skips every other gate's real evaluation", () => {
+  const { attempts, spend } = gFresh();
+  const killSwitch = createKillSwitch();
+  killSwitch.engage("test");
+  const r = evaluateGates({ record: gRecord({ customer: { dnc: false, locale: "en" } }), proposedAction: "WRITE_OFF", rates: gRates, killSwitch, attempts, spend, now: IN_WINDOW });
+  assert.strictEqual(r.finalAction, "NO_ACTION");
+  assert.strictEqual(r.trace[0].gate, "kill_switch");
+  assert.strictEqual(r.trace[0].result, "block");
+  assert.ok(r.trace.slice(1).every((t) => t.result === "pass"), "downstream gates should not independently re-derive a block once killed");
+});
+
+t("an action outside the closed vocabulary is coerced to NO_ACTION, not guessed", () => {
+  const { killSwitch, attempts, spend } = gFresh();
+  const r = evaluateGates({ record: gRecord(), proposedAction: "CHARGE_EVERYTHING_NOW", rates: gRates, killSwitch, attempts, spend, now: IN_WINDOW });
+  assert.strictEqual(r.finalAction, "NO_ACTION");
+  assert.strictEqual(r.allowed, false);
+});
+
+t("do-not-contact blocks a message but not a silent retry", () => {
+  const { killSwitch, attempts, spend } = gFresh();
+  const dnc = gRecord({ customer: { dnc: true, locale: "en" } });
+  const messaged = evaluateGates({ record: dnc, proposedAction: "PAYMENT_LINK_SMS", rates: gRates, killSwitch, attempts, spend, now: IN_WINDOW });
+  assert.strictEqual(messaged.finalAction, "ESCALATE_HUMAN");
+  const retried = evaluateGates({ record: { ...dnc, method: "card" }, proposedAction: "RETRY_CHARGE", rates: gRates, killSwitch, attempts, spend, now: IN_WINDOW });
+  assert.strictEqual(retried.finalAction, "RETRY_CHARGE", "a silent retry is not \"contact\" and DNC should not block it");
+});
+
+t("a business-paused mandate dead-ends on BOTH retry and nudge, independent of the frozen model", () => {
+  const { killSwitch, attempts, spend } = gFresh();
+  const rec = gRecord({ method: "emandate", failure: { reason: "mandate_paused_by_business" } });
+  const retry = evaluateGates({ record: rec, proposedAction: "RETRY_CHARGE", rates: gRates, killSwitch, attempts, spend, now: IN_WINDOW });
+  const nudge = evaluateGates({ record: rec, proposedAction: "PAYMENT_LINK_WHATSAPP", rates: gRates, killSwitch, attempts, spend, now: IN_WINDOW });
+  assert.strictEqual(retry.finalAction, "ESCALATE_HUMAN");
+  assert.strictEqual(nudge.finalAction, "ESCALATE_HUMAN");
+});
+
+t("a customer-paused mandate blocks retry but still allows a nudge through", () => {
+  const { killSwitch, attempts, spend } = gFresh();
+  const rec = gRecord({ method: "emandate", failure: { reason: "mandate_paused_by_customer" } });
+  const retry = evaluateGates({ record: rec, proposedAction: "RETRY_CHARGE", rates: gRates, killSwitch, attempts, spend, now: IN_WINDOW });
+  const nudge = evaluateGates({ record: rec, proposedAction: "PAYMENT_LINK_WHATSAPP", rates: gRates, killSwitch, attempts, spend, now: IN_WINDOW });
+  assert.strictEqual(retry.finalAction, "ESCALATE_HUMAN");
+  assert.strictEqual(nudge.finalAction, "PAYMENT_LINK_WHATSAPP", "only the customer can resume their own pause, so nudging them is still worth trying");
+});
+
+t("the mandate charge block fires even if the response-model's recoverability were miscalibrated", () => {
+  const { killSwitch, attempts, spend } = gFresh();
+  const tampered = JSON.parse(JSON.stringify(gRates));
+  tampered.failure_reason_recoverability.mandate_revoked.value = 1.0;
+  const rec = gRecord({ method: "emandate", failure: { reason: "mandate_revoked" } });
+  const r = evaluateGates({ record: rec, proposedAction: "RETRY_CHARGE", rates: tampered, killSwitch, attempts, spend, now: IN_WINDOW });
+  assert.strictEqual(r.finalAction, "ESCALATE_HUMAN", "the gate's own hard rule must not depend on the simulator's numbers being correct");
+});
+
+t("attempt ceiling: small amount writes off, large amount escalates instead", () => {
+  const { killSwitch, spend } = gFresh();
+  const maxedOut = createAttemptLedger();
+  for (let i = 0; i < DEFAULT_POLICY.maxAttemptsPerEntity; i++) {
+    maxedOut.recordAttempt("pay_g1", "RETRY_CHARGE", new Date(Date.now() - (DEFAULT_POLICY.maxAttemptsPerEntity - i) * 200 * 3600e3));
+  }
+  const small = evaluateGates({ record: gRecord({ amount_paise: 15000 }), proposedAction: "RETRY_CHARGE", rates: gRates, killSwitch, attempts: maxedOut, spend, now: IN_WINDOW });
+  assert.strictEqual(small.finalAction, "WRITE_OFF");
+  const large = evaluateGates({ record: gRecord({ amount_paise: 1500000 }), proposedAction: "RETRY_CHARGE", rates: gRates, killSwitch, attempts: maxedOut, spend, now: IN_WINDOW });
+  assert.strictEqual(large.finalAction, "ESCALATE_HUMAN");
+});
+
+t("cooldown defers a too-soon retry instead of letting it through", () => {
+  const { killSwitch, spend } = gFresh();
+  const recent = createAttemptLedger();
+  recent.recordAttempt("pay_g1", "RETRY_CHARGE", new Date(Date.now() - 1 * 3600e3));   // 1h ago
+  const r = evaluateGates({ record: gRecord(), proposedAction: "RETRY_CHARGE", rates: gRates, killSwitch, attempts: recent, spend, now: IN_WINDOW });
+  assert.strictEqual(r.finalAction, "NO_ACTION");
+  const cd = r.trace.find((x) => x.gate === "cooldown");
+  assert.strictEqual(cd.result, "block");
+});
+
+t("quiet hours defers a message at 2 AM IST and allows the same message at 2:30 PM IST", () => {
+  const { killSwitch, attempts, spend } = gFresh();
+  const night = evaluateGates({ record: gRecord(), proposedAction: "VOICE_NUDGE_REGIONAL", rates: gRates, killSwitch, attempts, spend, now: OUT_OF_WINDOW });
+  const day = evaluateGates({ record: gRecord(), proposedAction: "VOICE_NUDGE_REGIONAL", rates: gRates, killSwitch, attempts, spend, now: IN_WINDOW });
+  assert.strictEqual(night.finalAction, "NO_ACTION");
+  assert.strictEqual(day.finalAction, "VOICE_NUDGE_REGIONAL");
+});
+
+t("quiet hours never restricts a silent retry or an escalation", () => {
+  const { killSwitch, attempts, spend } = gFresh();
+  const retryAtNight = evaluateGates({ record: gRecord(), proposedAction: "RETRY_CHARGE", rates: gRates, killSwitch, attempts, spend, now: OUT_OF_WINDOW });
+  assert.strictEqual(retryAtNight.finalAction, "RETRY_CHARGE");
+});
+
+t("approval ceiling forces a human on amount alone, regardless of the proposed action", () => {
+  const { killSwitch, attempts, spend } = gFresh();
+  const r = evaluateGates({ record: gRecord({ amount_paise: DEFAULT_POLICY.autoApprovalCeilingPaise }), proposedAction: "PAYMENT_LINK_SMS", rates: gRates, killSwitch, attempts, spend, now: IN_WINDOW });
+  assert.strictEqual(r.finalAction, "ESCALATE_HUMAN");
+});
+
+t("per-run spend cap trips and reroutes further paid actions to a human", () => {
+  const { killSwitch, attempts } = gFresh();
+  const spend = createSpendTracker();
+  spend.record(DEFAULT_POLICY.spendCapPerRunPaise - 10);   // 10 paise of headroom left
+  const r = evaluateGates({ record: gRecord(), proposedAction: "PAYMENT_LINK_WHATSAPP", rates: gRates, killSwitch, attempts, spend, policy: { respectQuietHours: false }, now: IN_WINDOW });
+  assert.strictEqual(r.finalAction, "ESCALATE_HUMAN");
+});
+
+t("per-day spend cap is independent of the per-run cap", () => {
+  const { killSwitch, attempts } = gFresh();
+  const spend = createSpendTracker();
+  spend.record(DEFAULT_POLICY.spendCapPerDayPaise - 10, IN_WINDOW);
+  const r = evaluateGates({ record: gRecord(), proposedAction: "PAYMENT_LINK_WHATSAPP", rates: gRates, killSwitch, attempts, spend, now: IN_WINDOW });
+  assert.strictEqual(r.finalAction, "ESCALATE_HUMAN");
+});
+
+t("idempotency key is present for money-moving actions and absent otherwise", () => {
+  const { killSwitch, attempts, spend } = gFresh();
+  const acting = evaluateGates({ record: gRecord(), proposedAction: "RETRY_CHARGE", rates: gRates, killSwitch, attempts, spend, now: IN_WINDOW });
+  const passive = evaluateGates({ record: gRecord(), proposedAction: "NO_ACTION", rates: gRates, killSwitch, attempts, spend, now: IN_WINDOW });
+  assert.ok(typeof acting.idempotencyKey === "string" && acting.idempotencyKey.length > 0);
+  assert.strictEqual(passive.idempotencyKey, null);
+});
+
+t("idempotency key changes with attempt count, so a retry after a real attempt is not misfiled as a duplicate", () => {
+  const { killSwitch, spend } = gFresh();
+  const attempts = createAttemptLedger();
+  const first = evaluateGates({ record: gRecord(), proposedAction: "RETRY_CHARGE", rates: gRates, killSwitch, attempts, spend, now: IN_WINDOW });
+  attempts.recordAttempt("pay_g1", "RETRY_CHARGE", new Date(Date.now() - 100 * 3600e3));
+  const second = evaluateGates({ record: gRecord(), proposedAction: "RETRY_CHARGE", rates: gRates, killSwitch, attempts, spend, now: IN_WINDOW });
+  assert.notStrictEqual(first.idempotencyKey, second.idempotencyKey);
+});
+
+t("\"allowed\" is true only when nothing overrode the proposed action", () => {
+  const { killSwitch, attempts, spend } = gFresh();
+  const clean = evaluateGates({ record: gRecord(), proposedAction: "PAYMENT_LINK_WHATSAPP", rates: gRates, killSwitch, attempts, spend, now: IN_WINDOW });
+  const overridden = evaluateGates({ record: gRecord({ customer: { dnc: true, locale: "en" } }), proposedAction: "PAYMENT_LINK_WHATSAPP", rates: gRates, killSwitch, attempts, spend, now: IN_WINDOW });
+  assert.strictEqual(clean.allowed, true);
+  assert.strictEqual(overridden.allowed, false);
+});
+
+t("withinQuietHours agrees with the gate's own verdict at the boundary hours", () => {
+  assert.strictEqual(withinQuietHours(new Date("2026-08-23T03:30:00.000Z")), true);   // 09:00 IST, start inclusive
+  assert.strictEqual(withinQuietHours(new Date("2026-08-23T03:29:00.000Z")), false);  // 08:59 IST
+  assert.strictEqual(withinQuietHours(new Date("2026-08-23T13:29:00.000Z")), true);   // 18:59 IST
+  assert.strictEqual(withinQuietHours(new Date("2026-08-23T13:30:00.000Z")), false);  // 19:00 IST, end exclusive
 });
 
 console.log(`\n${pass} passed, ${fail} failed\n`);

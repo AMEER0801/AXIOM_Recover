@@ -89,6 +89,15 @@ function toCanonical(event) {
     "payment.captured": "payment_captured",
     "order.paid": "payment_captured",
     "subscription.halted": "subscription_halted",
+    /* subscription.paused and subscription.halted are different
+       events with different meanings — halted is Razorpay's own
+       retry cycle running out (nobody paused anything), paused is
+       an explicit pause with a pause_initiated_by field. Both are
+       mapped to the same canonical kind for now, since this project
+       does not yet have a separate "paused" workflow; the meaningful
+       difference is captured in failure.reason instead, via
+       classifyFailureReason() below. */
+    "subscription.paused": "subscription_halted",
     "invoice.expired": "invoice_overdue",
     "refund.processed": "refund_processed",
     "settlement.processed": "settlement_line",
@@ -117,19 +126,68 @@ function toCanonical(event) {
         || ent.method === "netbanking" || ent.method === "wallet" ? ent.method : "card",
       failure: kind === "payment_failed" || kind === "subscription_halted"
         ? {
-            source: ent.error_source || "gateway",
+            source: ent.error_source || (ent.pause_initiated_by === "self" ? "customer" : ent.pause_initiated_by ? "business" : "gateway"),
             step: ent.error_step || "payment_authorization",
             code: ent.error_code || "BAD_REQUEST_ERROR",
-            /* error_reason is Razorpay's vocabulary; the recoverability
-               table keys off ours. Unmapped reasons fall through to a
-               neutral multiplier and are counted, never guessed at. */
-            reason: ent.error_reason || "payment_timeout",
+            reason: classifyFailureReason(ent, kind),
           }
         : null,
       attempt_no: Number((ent.notes && ent.notes.attempt) || 0),
       raw: { event: event.event, simulated: false },
     },
   };
+}
+
+/* ── failure reason classification ──────────────────────────────
+   Razorpay does not send a `failure.reason` field in our vocabulary
+   — it sends `error_reason`, `error_description`, and, for
+   subscriptions, `pause_initiated_by`. This function is the one
+   place that translates their fields into ours, so a change to
+   either vocabulary is a one-function fix rather than a scattered
+   hunt.
+
+   Order of preference:
+     1. pause_initiated_by, for a subscription pause — this is the
+        one case where getting the mapping wrong doesn't just
+        misfile a record, it points the recovery loop at the wrong
+        party entirely (nudging a customer who isn't the blocker,
+        or vice versa).
+     2. error_reason, matched exactly against our known reasons —
+        Razorpay's values sometimes coincide with ours.
+     3. error_description, matched by keyword — the same pattern a
+        human support engineer uses when the structured field is
+        missing or unfamiliar. Ends in a stated default rather than
+        a guess dressed up as one. */
+function classifyFailureReason(ent, kind) {
+  if (kind === "subscription_halted" && ent.pause_initiated_by) {
+    /* Confirmed against Razorpay's subscription documentation: a
+       business cannot force-resume a pause the customer initiated
+       themselves. "self" is the customer; anything else recorded in
+       this field is the business's own identifier. */
+    return ent.pause_initiated_by === "self"
+      ? "mandate_paused_by_customer"
+      : "mandate_paused_by_business";
+  }
+
+  const KNOWN = new Set([
+    "insufficient_funds", "gateway_error", "issuer_down", "payment_timeout",
+    "authentication_failed", "card_expired", "card_blocked",
+    "mandate_revoked", "mandate_paused_by_customer", "mandate_paused_by_business",
+    "invalid_account",
+  ]);
+  if (ent.error_reason && KNOWN.has(ent.error_reason)) return ent.error_reason;
+
+  const hay = `${ent.error_description || ""} ${ent.error_reason || ""}`.toLowerCase();
+  if (/expired/.test(hay)) return "card_expired";
+  if (/insufficient|balance/.test(hay)) return "insufficient_funds";
+  if (/timed?\s*out|timeout|downtime|bank server|did not respond/.test(hay)) return "issuer_down";
+  if (/authentication|otp|3d.?secure/.test(hay)) return "authentication_failed";
+  if (/invalid.*(vpa|account)/.test(hay)) return "invalid_account";
+  if (/block/.test(hay)) return "card_blocked";
+  /* Stated default, not a silent one — a record that reaches here
+     is counted as payment_timeout, and that choice is written down
+     rather than left for someone to reverse-engineer later. */
+  return "payment_timeout";
 }
 
 function reject(res, reason, code = 400) {
@@ -222,4 +280,4 @@ if (require.main === module) {
   });
 }
 
-module.exports = { server, toCanonical, EGRESS };
+module.exports = { server, toCanonical, classifyFailureReason, EGRESS };

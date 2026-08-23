@@ -43,6 +43,16 @@
     "card_expired": { "value": 0.05, "source": "" },
     "card_blocked": { "value": 0.05, "source": "" },
     "mandate_revoked": { "value": 0.0, "source": "" },
+    "mandate_paused_by_customer": {
+      "value": 0.4,
+      "source": "",
+      "_note": "Governs the NUDGE branch only — a charge against a paused mandate is hard-blocked in response-model.frozen.js regardless of this number. A message can still prompt the customer to resume it themselves, since only they hold that switch."
+    },
+    "mandate_paused_by_business": {
+      "value": 0.0,
+      "source": "",
+      "_note": "Deliberately zero for BOTH retry and nudge. The block is on the business side, so contacting the customer accomplishes nothing — the only correct action today is ESCALATE_HUMAN, because no intervention in the current set can call the API that would actually resume it. That gap is documented in README.md as a known limitation, not hidden by giving this a comforting non-zero number."
+    },
     "invalid_account": { "value": 0.0, "source": "" }
   },
 

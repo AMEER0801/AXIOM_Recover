@@ -53,7 +53,29 @@ const FAILURE_REASONS = Object.freeze([
   "authentication_failed",
   "card_expired",
   "card_blocked",
+  /* mandate_revoked was a single bucket until a review of Razorpay's
+     subscription docs surfaced that "the mandate stopped working"
+     is three different situations with three different remedies,
+     not one:
+
+       mandate_revoked           the customer cancelled consent at
+                                  their bank/UPI app entirely — dead,
+                                  no API call reverses this
+       mandate_paused_by_customer the customer paused it through their
+                                  own consent flow — Razorpay's API
+                                  will not let the business force a
+                                  resume; only the customer can
+       mandate_paused_by_business the business paused it (a billing
+                                  hold, a plan change) — the business
+                                  CAN resume it via API
+
+     Collapsing these into one "revoked" reason would tell an agent
+     to give up on a record that a single API call could fix, and
+     would tell it to keep nudging a customer who was never the one
+     blocking it in the first place. */
   "mandate_revoked",
+  "mandate_paused_by_customer",
+  "mandate_paused_by_business",
   "invalid_account",
 ]);
 

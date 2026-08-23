@@ -46,13 +46,70 @@ This is an active build. Here is exactly what is finished and what is not, so th
 | Customer-response model | Simulates how a test customer would respond to each action, locked before agent logic exists | Done, locked |
 | Payment security layer | Verifies that incoming payment notifications are genuinely from Razorpay and not forged | Done, tested |
 | Razorpay connection | Sends requests to Razorpay's test system safely, with no risk of double-charging | Done, tested |
-| Automated tests | 43 checks that confirm the above claims are actually true | All passing |
+| Automated tests | 72 checks that confirm the above claims are actually true | All passing |
 | Reconciliation engine | Matches payments to settlements, explains gaps, triages what's left | Done, tested |
-| Decision & guardrail layer | The actual agent logic that chooses and limits actions | In progress |
+| Gate layer (money firewall) | Every bounded/gated guarantee, enforced and unit-tested independently | Done, tested |
+| Recovery loop | The agent logic that calls the gate layer and executes | In progress |
 | Ledger console | A single-file screen showing every tie-out, its evidence, and the queue | Done |
 | Recovery dashboard | Live view of the agent choosing and executing actions | In progress |
 | Sourced assumptions | Replacing placeholder estimates with cited real-world figures | In progress |
 
+## Architecture
+
+```mermaid
+flowchart LR
+  RZP["Razorpay Test Mode"] -->|"raw bytes + X-Razorpay-Signature"| WH["POST /webhooks/razorpay"]
+  WH --> VER{"HMAC-SHA256 verified?"}
+  VER -->|"no"| REJ["reject + audit reason\n(never echoed to caller)"]
+  VER -->|"yes"| DEDUPE{"seen before?\nx-razorpay-event-id"}
+  DEDUPE -->|"yes"| ACK["200 OK, ignored"]
+  DEDUPE -->|"no"| MAP["toCanonical + classifyFailureReason\nreal Razorpay fields to our schema"]
+  MAP --> VALID{"schema valid?"}
+  VALID -->|"no"| QUAR["quarantined, counted"]
+  VALID -->|"yes"| LEDGER[("canonical ledger\npaise, hashed contacts")]
+
+  LEDGER --> SETTLED["captured + settlements + refunds"]
+  LEDGER --> ATRISK["failed / abandoned / halted / overdue"]
+
+  SETTLED --> RECON["recon.js\nexplain before flag"]
+  RECON --> LADDER["confidence ladder"]
+  LADDER --> UI["ui/ledger.html\ndelta gutter, gap decomposition"]
+
+  ATRISK --> MODEL["frozen response model\nlocked before agent logic exists"]
+  MODEL -.->|"Day 5+"| GATES["gates.js\nbounded action layer"]
+  GATES -.-> LOOP["recovery loop"]
+  LOOP -.-> RECON
+
+  SEED["seed.js\ndeterministic batch + answer key"] -.-> LEDGER
+```
+
+Dashed arrows are not built yet. This diagram is corrected as the system grows rather than drawn once at the start and left to go stale — the two solid-arrow halves above (webhook ingestion and reconciliation) are real and tested; the dashed half (the recovery agent itself) is Day 5 onward.
+
+---
+
+## A finding worth its own section: two mandates that look identical and aren't
+
+While extending the failure-reason taxonomy, checking it against Razorpay's actual subscription behaviour surfaced something the first version of this model got wrong by collapsing it into one bucket.
+
+**"The subscription's mandate stopped working" is not one situation — it's three, with three different remedies:**
+
+| Reason | What happened | Who can fix it |
+|---|---|---|
+| `mandate_revoked` | Customer cancelled consent at their bank/UPI app entirely | Nobody — it's dead |
+| `mandate_paused_by_customer` | Customer paused it themselves, through their own consent flow | Only the customer — Razorpay's API will not let a business force this |
+| `mandate_paused_by_business` | The business paused it (a billing hold, a plan change) | The business — but only through an API call this project doesn't implement yet |
+
+The first version of this project had one `mandate_revoked` bucket covering all three. That's a real defect, not a stylistic simplification: it would tell an automated agent to write off a subscription that a single API call could have fixed, and it would tell the agent to keep messaging a customer who was never the one blocking anything in the first place.
+
+**How the model now handles each one:**
+
+- Attempting to charge any of the three is hard-blocked at zero probability — not "unlikely," genuinely zero, enforced as a rule rather than a calibratable number, because there is no live authorisation for a retry to use against a suspended mandate.
+- A customer-paused mandate can still be *nudged* — a message can prompt the customer to resume it themselves, since only they hold that switch.
+- A business-paused mandate cannot be usefully nudged *or* charged. Messaging the customer accomplishes nothing, because the customer was never the blocker. The model reports zero recoverability through every intervention this project currently has — which is not a gap being hidden, it's the honest way of saying **this record's only correct action is escalation to a human who can make the API call**, and it will stay that way until a `RESUME_SUBSCRIPTION` action exists.
+
+This last point is a deliberate design choice: rather than special-casing "if reason is business-paused, force escalate" somewhere in future agent logic, the numbers themselves already make escalation the only sensible choice. A future policy layer that tries every intervention on this record type will observe 0% success on all of them and shouldn't need a hardcoded rule to figure out what to do next.
+
+**A third bug this surfaced, caught by testing rather than by inspection:** at 400 synthetic records, `mandate_paused_by_business` occurred zero times. Its declared share is 1% of failure reasons, and it only survives at all when the same record also draws the e-mandate payment method (a 14% share) — a joint probability of roughly 0.14%. This is the exact same failure mode as the settlement break-classes bug from Day 1 (`BREAK_MIX`), showing up again in a different part of the generator. The fix follows the same pattern: the rare reason is now guaranteed to appear at least once per batch, and the batch summary discloses when that guarantee had to fire (`mandate_reasons_forced` in `truth.json`) rather than silently forcing it without saying so.
 
 ---
 
@@ -132,6 +189,48 @@ The scorecard reports the 25-batch sweep rather than the single batch on screen,
 
 ---
 
+## The gate layer: "bounded and gated," made concrete
+
+`gates.js` is the one place in this project that is allowed to say whether a proposed action may actually run. Every guarantee below is enforced there, tested independently, and demonstrated in `npm run gates:demo` — seven scenarios, each engineered to trip exactly one gate, with the full trace printed.
+
+| Gate | What it enforces |
+|---|---|
+| Kill switch | Everything stops, unconditionally, the moment it's engaged — no exceptions carved out |
+| Action allowlist | A proposed action outside the closed vocabulary is coerced to doing nothing, never guessed into the nearest match |
+| Do-not-contact | Absolute, no override path — blocks messaging, never blocks a silent retry |
+| Mandate charge block | The same "cannot charge a suspended mandate" rule from the frozen model, enforced *again*, independently, at execution time |
+| Business-paused routing | A business-paused mandate can't be fixed by messaging the customer, so it goes straight to a human instead of wasting a contact attempt |
+| Attempt ceiling | Stops retrying after a configured maximum; small amounts write off, large amounts still go to a human |
+| Cooldown | A minimum wait since the last attempt — pacing, not a probability judgement |
+| Quiet hours | No customer-facing message outside 9 AM–7 PM IST |
+| Approval ceiling | Amount alone can force human review, regardless of what else passed |
+| Spend caps (run + day) | Further paid actions reroute to a human once either cap is reached |
+
+### Why the trace matters more than the verdict
+
+Every gate pushes exactly one entry to the trace, every time — pass or block — including the nine gates that had nothing to say about a particular action. A trace that only records failures invites the question "were the others actually checked?" This one is built so that question doesn't need asking: `npm test` includes a check that every trace contains all eleven gate names, in order, on every single call.
+
+### Two independent copies of the same rule, on purpose
+
+The rule "a suspended e-mandate cannot be charged" exists twice in this codebase — once in `model/response-model.frozen.js`, where it keeps the *scoring* honest, and again in `gates.js`, where it keeps *execution* honest. These are different files, checked by different tests, and one is proven not to depend on the other: a test tampers with the frozen model's recoverability number, sets it to a wrong, "should definitely work" value, and confirms the gate still blocks the charge anyway. A bug in either copy alone still can't produce a duplicate or impossible charge.
+
+### The quiet-hours citation, and its honest limit
+
+The 9 AM–7 PM window is the intersection of two regulatory sources, not a number picked for the demo:
+
+- RBI's Fair Practices Code restricts loan-recovery-agent contact to 8 AM–7 PM.
+- TRAI's Telecom Commercial Communications Customer Preference Regulations restrict promotional calls and messages to 9 AM–9 PM.
+
+Neither one cleanly covers what this project actually does. RBI's code governs regulated lenders collecting *loans* — a merchant chasing a *failed e-commerce payment* isn't that, so it isn't strictly bound by it. TRAI's window applies to *promotional* communication, and a payment-recovery nudge is arguably *transactional* in TRAI's own taxonomy, which could exempt it entirely. Rather than picking whichever reading is more convenient, this project takes the **intersection** of both cited windows as the conservative default — 9 AM–7 PM — and says so, instead of quietly claiming a compliance guarantee it hasn't verified with a lawyer.
+
+### What is deliberately outside this file
+
+`gates.js` decides. It does not execute, and it does not remember anything between calls — recording that an attempt happened or that money was spent is the executor's job, done only *after* an action actually runs. Keeping the decision function free of side effects is what makes it possible to unit-test every gate in isolation, calling it hundreds of times with fabricated histories, without ever touching a real spend counter or a real webhook.
+
+The actual recovery loop that calls this file, executes the allowed action, and feeds the outcome back into the reconciler is the next piece being built.
+
+---
+
 ## For technical reviewers
 
 ### Quick start
@@ -144,13 +243,14 @@ cp .env.example .env
 # Generate a random value for CONTACT_SALT and paste it into .env:
 node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"
 
-npm test          # runs all 43 automated checks
-npm run seed      # generates a reproducible test dataset + answer key
-npm run recon     # reconciles that dataset and scores itself against the answer key
-npm run sweep     # repeats the above across 25 independent datasets
-npm run ui        # builds the ledger console into ui/ledger.html
-npm run check     # verifies the locked model hasn't changed, and checks citations
-npm start         # starts the server that receives Razorpay webhooks
+npm test             # runs all 72 automated checks
+npm run seed         # generates a reproducible test dataset + answer key
+npm run recon        # reconciles that dataset and scores itself against the answer key
+npm run sweep        # repeats the above across 25 independent datasets
+npm run ui           # builds the ledger console into ui/ledger.html
+npm run gates:demo   # 7 scenarios, each tripping exactly one gate, full trace printed
+npm run check        # verifies the locked model hasn't changed, and checks citations
+npm start            # starts the server that receives Razorpay webhooks
 ```
 
 Running `npm run seed` with the same seed number always produces the exact same test data, on any computer. This is verified by an automated test, not just claimed.
@@ -176,7 +276,7 @@ axiom-recover/
     │   ├── base-rates.json            assumptions behind that simulation (needs citations)
     │   └── FROZEN.json                proof that the model above hasn't been altered
     └── test/
-        └── smoke.js                   35 automated checks
+        └── smoke.js                   72 automated checks
 ```
 
 ### Key engineering decisions
@@ -202,8 +302,10 @@ Both are documented here rather than hidden, because a project that only shows i
 ### What is not yet finished
 
 - The current assumptions in `base-rates.json` are reasonable placeholder estimates, not yet backed by cited sources. This is flagged automatically by `npm run check`, which will not allow results to be called final until this is resolved.
-- The decision-making agent, the guardrail layer, and the visual dashboard are still being built.
+- The recovery loop that actually calls the gate layer, executes the allowed action against Razorpay, and feeds the outcome back into the reconciler is still being built. The gate layer itself (`gates.js`) is finished and tested.
+- The visual dashboard for the recovery side (as opposed to the reconciliation side, which `ui/ledger.html` already covers) is still being built.
 - The mapping between Razorpay's real webhook format and this project's internal data format should be checked against Razorpay's current API documentation before connecting to live data, as APIs can change over time.
+- Spend-cap and approval-ceiling figures in `gates.js` (₹5,000 per run, ₹20,000 per day, ₹10,000 auto-approval threshold) are placeholder business decisions, not citations — unlike the quiet-hours window, nothing regulatory pins these numbers, and they should be set deliberately before this runs against a real merchant's book.
 
 ---
 

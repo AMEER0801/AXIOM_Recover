@@ -16,7 +16,8 @@
     "recon": "node recon.js --data ./data",
     "sweep": "node sweep.js --seeds 25",
     "sweep:band": "node sweep.js --seeds 25 --band-sweep",
-    "ui": "node ../ui/build-ui.js --seed 42 --records 200 --sweep 25"
+    "ui": "node ../ui/build-ui.js --seed 42 --records 200 --sweep 25",
+    "gates:demo": "node gates.js --demo"
   },
   "dependencies": {}
 }
