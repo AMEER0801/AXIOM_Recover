@@ -17,7 +17,11 @@
     "sweep": "node sweep.js --seeds 25",
     "sweep:band": "node sweep.js --seeds 25 --band-sweep",
     "ui": "node ../ui/build-ui.js --seed 42 --records 200 --sweep 25",
-    "gates:demo": "node gates.js --demo"
+    "gates:demo": "node gates.js --demo",
+    "recover": "node recover.js --seed 42 --records 200 --rounds 8",
+    "eval": "node eval.js --seeds 20 --records 200 --rounds 8",
+    "recon:recovered": "node recon.js --data ./data/recover",
+    "ui:recovery": "node ../ui/build-recovery.js --seed 42 --records 200 --rounds 8"
   },
   "dependencies": {}
 }

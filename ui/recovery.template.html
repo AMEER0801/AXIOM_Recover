@@ -1,0 +1,423 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>AXIOM RECOVER — recovery run</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Archivo:wght@600;700&family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+/* ══════════════════════════════════════════════════════════════
+   AXIOM RECOVER · RECOVERY CONSOLE
+
+   Sibling to ledger.html — same ledger-paper palette, same
+   typography, same principle that colour carries meaning and
+   nothing else.
+
+   One deliberate semantic difference. In the ledger console red
+   means "exception, something is wrong." Here a gate blocking an
+   action is the system working correctly, not a fault, so it does
+   NOT get the alarm colour. It gets its own — a deep indigo that
+   reads as "deliberate intervention."
+   ══════════════════════════════════════════════════════════════ */
+
+:root{
+  --paper:#E7EAEE;
+  --sheet:#F6F8FA;
+  --ink:#131822;
+  --ink-2:#5A6472;
+  --ink-3:#8A93A0;
+  --rule:#C4CCD6;
+  --rule-soft:#D8DEE5;
+
+  --paid:#0D6B58;          /* recovered                          */
+  --gate:#2B4C8A;          /* a gate intervened — correct, not bad */
+  --human:#8A6714;         /* escalated, needs a person          */
+  --closed:#9299A5;        /* written off, closed unrecovered    */
+  --defer:#C4CCD6;         /* deferred this round                */
+
+  --paid-wash:#0D6B5814;
+  --gate-wash:#2B4C8A14;
+  --human-wash:#8A671414;
+
+  --mono:"IBM Plex Mono",ui-monospace,Menlo,monospace;
+  --sans:"IBM Plex Sans",system-ui,-apple-system,sans-serif;
+  --disp:"Archivo","Archivo Narrow",var(--sans);
+}
+
+*{box-sizing:border-box;margin:0;padding:0}
+html{-webkit-text-size-adjust:100%}
+body{
+  background:var(--paper);color:var(--ink);
+  font:400 14px/1.5 var(--sans);padding:0 0 64px;
+  background-image:repeating-linear-gradient(180deg,transparent 0 31px,#00000006 31px 32px);
+}
+.wrap{max-width:1180px;margin:0 auto;padding:0 20px}
+
+.lbl{font-family:var(--disp);font-weight:700;font-size:10px;letter-spacing:.14em;text-transform:uppercase;color:var(--ink-3)}
+.num{font-family:var(--mono);font-variant-numeric:tabular-nums}
+
+/* ── rail ─────────────────────────────────────────────────────── */
+.rail{border-bottom:1px solid var(--rule);background:var(--sheet);position:sticky;top:0;z-index:20}
+.rail-in{display:flex;align-items:baseline;gap:18px;padding:14px 0;flex-wrap:wrap}
+.mark{font-family:var(--disp);font-weight:700;font-size:15px;letter-spacing:.10em;text-transform:uppercase}
+.mark span{color:var(--ink-3);font-weight:600}
+.rail-meta{margin-left:auto;display:flex;gap:20px;flex-wrap:wrap}
+.rail-meta div{display:flex;gap:7px;align-items:baseline}
+.rail-meta b{font-family:var(--mono);font-weight:500;font-size:12px}
+
+/* ── hero: the two arms ───────────────────────────────────────── */
+.arms{padding:38px 0 30px;border-bottom:1px solid var(--rule)}
+.arm-grid{display:grid;grid-template-columns:1fr 150px 1fr;align-items:center}
+.arm{padding:0 22px}
+.arm.r{text-align:right}
+.arm-net{font-family:var(--mono);font-weight:500;font-size:clamp(24px,4.2vw,38px);letter-spacing:-.02em;line-height:1;margin-top:9px}
+.arm-sub{font-size:12px;color:var(--ink-2);margin-top:9px}
+.arm-join{height:100%;min-height:96px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:7px;
+  border-left:1px solid var(--rule);border-right:1px solid var(--rule);background:var(--sheet)}
+.arm-delta{font-family:var(--mono);font-size:17px;font-weight:600;color:var(--paid)}
+.arm-verdict{font-family:var(--disp);font-size:9px;letter-spacing:.13em;text-transform:uppercase;color:var(--ink-3);text-align:center;line-height:1.5}
+
+.counts{display:flex;margin-top:28px;border:1px solid var(--rule);background:var(--sheet);flex-wrap:wrap}
+.count{flex:1;min-width:150px;padding:14px 18px;border-right:1px solid var(--rule-soft)}
+.count:last-child{border-right:0}
+.count b{display:block;font-family:var(--mono);font-size:21px;font-weight:500;margin-top:5px;line-height:1}
+
+.caveat{margin-top:22px;padding:13px 16px;border-left:2px solid var(--human);background:var(--human-wash);font-size:13px;color:var(--ink-2);max-width:790px;line-height:1.6}
+.caveat b{color:var(--ink);font-weight:600}
+
+/* ── THE DECISION RIBBON · the signature ───────────────────────
+   One track per record, one cell per round. Scanning down the
+   ribbon shows the shape of a whole campaign: where gates held
+   things back, where money came in, where records went to a
+   human. */
+.ribbon-sec{padding:30px 0 0}
+.ribbon{margin-top:14px;border:1px solid var(--rule);background:var(--sheet);overflow-x:auto}
+.rb-row{display:flex;align-items:stretch;border-bottom:1px solid var(--rule-soft);min-width:640px}
+.rb-row:last-child{border-bottom:0}
+.rb-row:hover{background:#EDF1F5}
+.rb-row.open{background:#EDF1F5}
+.rb-id{flex:0 0 168px;padding:6px 12px;font-family:var(--mono);font-size:11px;color:var(--ink-2);
+  border-right:1px solid var(--rule-soft);display:flex;align-items:center;gap:8px;cursor:pointer}
+.rb-amt{flex:0 0 104px;padding:6px 12px;font-family:var(--mono);font-size:11.5px;text-align:right;
+  border-right:1px solid var(--rule-soft);display:flex;align-items:center;justify-content:flex-end}
+.rb-cells{flex:1;display:flex;gap:2px;padding:6px 12px;align-items:center;cursor:pointer}
+.rb-cell{flex:1;height:16px;min-width:8px;position:relative}
+.rb-end{flex:0 0 108px;padding:6px 12px;display:flex;align-items:center}
+
+.pill{font-family:var(--disp);font-size:8.5px;font-weight:700;letter-spacing:.11em;text-transform:uppercase;padding:2px 6px;white-space:nowrap}
+.pill.paid{background:var(--paid-wash);color:var(--paid)}
+.pill.human{background:var(--human-wash);color:var(--human)}
+.pill.closed{color:var(--closed)}
+
+.legend{display:flex;gap:20px;margin-top:12px;flex-wrap:wrap;font-size:12px;color:var(--ink-2)}
+.legend div{display:flex;align-items:center;gap:7px}
+.legend i{width:12px;height:12px;display:inline-block;flex:none}
+
+/* ── expanded trace ───────────────────────────────────────────── */
+.trace{padding:16px 20px 20px;background:#EDF1F5;border-bottom:1px solid var(--rule-soft);border-left:2px solid var(--gate)}
+.trace h4{font-size:13.5px;font-weight:600;margin-bottom:4px}
+.trace .meta{font-family:var(--mono);font-size:11px;color:var(--ink-3);margin-bottom:12px}
+.gates{display:flex;flex-direction:column;gap:3px}
+.g{display:flex;gap:10px;font-size:11.5px;align-items:baseline}
+.g-mark{flex:0 0 12px;font-family:var(--mono);text-align:center}
+.g-name{flex:0 0 178px;font-family:var(--mono);font-size:11px}
+.g-detail{flex:1;color:var(--ink-2);font-size:11.5px}
+.g.block .g-mark,.g.block .g-name{color:var(--gate);font-weight:600}
+.g.block .g-detail{color:var(--ink)}
+.g.pass{opacity:.62}
+
+/* ── gate coverage ────────────────────────────────────────────── */
+.cov{padding:34px 0 0}
+.cov-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(232px,1fr));gap:0;margin-top:14px;border:1px solid var(--rule)}
+.cov-cell{padding:12px 14px;border-right:1px solid var(--rule-soft);border-bottom:1px solid var(--rule-soft);background:var(--sheet)}
+.cov-cell b{display:block;font-family:var(--mono);font-size:12px;margin-bottom:5px}
+.cov-cell .kindtag{font-family:var(--disp);font-size:8.5px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;padding:1px 5px;margin-left:6px}
+.cov-cell.fired{border-left:2px solid var(--gate)}
+.cov-cell.fired b{color:var(--gate)}
+.cov-cell p{font-size:11.5px;color:var(--ink-2);line-height:1.5}
+.kindtag.bydesign{background:#2B4C8A14;color:var(--gate)}
+.kindtag.backstop{background:#0D6B5814;color:var(--paid)}
+.kindtag.scenario{background:#8A671414;color:var(--human)}
+
+.foot{margin-top:44px;padding-top:20px;border-top:1px solid var(--rule);font-size:12px;color:var(--ink-3);display:flex;justify-content:space-between;gap:20px;flex-wrap:wrap}
+
+.filters{display:flex;gap:0;margin-top:14px;border:1px solid var(--rule);flex-wrap:wrap}
+.filt{flex:1;min-width:118px;padding:10px 13px;background:var(--sheet);border-right:1px solid var(--rule-soft);
+  cursor:pointer;text-align:left;font:inherit;color:inherit;transition:background .12s}
+.filt:last-child{border-right:0}
+.filt:hover{background:#EDF1F5}
+.filt[aria-pressed="true"]{background:var(--ink);color:var(--sheet)}
+.filt[aria-pressed="true"] .lbl{color:#9AA5B4}
+.filt b{display:block;font-family:var(--mono);font-size:16px;font-weight:500;margin-top:4px}
+
+@keyframes settle{from{opacity:0;transform:translateY(2px)}to{opacity:1;transform:none}}
+.rb-row.anim{animation:settle .22s ease-out backwards}
+@media (prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
+:focus-visible{outline:2px solid var(--ink);outline-offset:2px}
+
+@media (max-width:860px){
+  .arm-grid{grid-template-columns:1fr}
+  .arm-join{border:0;border-top:1px solid var(--rule);border-bottom:1px solid var(--rule);flex-direction:row;min-height:0;padding:11px;gap:12px}
+  .arm,.arm.r{text-align:left;padding:16px 0}
+  .count{min-width:50%;border-bottom:1px solid var(--rule-soft)}
+}
+</style>
+</head>
+<body>
+
+<header class="rail">
+  <div class="wrap rail-in">
+    <div class="mark">Axiom Recover <span>/ recovery run</span></div>
+    <div class="rail-meta">
+      <div><span class="lbl">batch</span><b id="m-seed">&mdash;</b></div>
+      <div><span class="lbl">rounds</span><b id="m-rounds">&mdash;</b></div>
+      <div><span class="lbl">audit chain</span><b id="m-chain">&mdash;</b></div>
+      <div><span class="lbl">reportable</span><b id="m-rep">&mdash;</b></div>
+    </div>
+  </div>
+</header>
+
+<main class="wrap">
+
+  <!-- ═══ THE TWO ARMS ═══ -->
+  <section class="arms">
+    <div class="arm-grid">
+      <div class="arm">
+        <div class="lbl">Baseline &mdash; retry blindly</div>
+        <div class="arm-net" id="a-base">&mdash;</div>
+        <div class="arm-sub">no branching on reason or channel &middot; costs nothing to send</div>
+      </div>
+      <div class="arm-join">
+        <div class="lbl">Delta</div>
+        <div class="arm-delta" id="a-delta">&mdash;</div>
+        <div class="arm-verdict" id="a-verdict">&mdash;</div>
+      </div>
+      <div class="arm r">
+        <div class="lbl">Smart &mdash; reason-aware</div>
+        <div class="arm-net" id="a-smart">&mdash;</div>
+        <div class="arm-sub">escalates channels, respects locale, skips the doomed</div>
+      </div>
+    </div>
+
+    <div class="counts">
+      <div class="count"><span class="lbl">Payments recovered</span><b id="c-paid">&mdash;</b></div>
+      <div class="count"><span class="lbl">Independently reconciled</span><b id="c-verif" style="color:var(--paid)">&mdash;</b></div>
+      <div class="count"><span class="lbl">Gate interventions</span><b id="c-gated" style="color:var(--gate)">&mdash;</b></div>
+      <div class="count"><span class="lbl">Opt-outs caused</span><b id="c-opt" style="color:var(--human)">&mdash;</b></div>
+    </div>
+
+    <div class="caveat" id="caveat"></div>
+  </section>
+
+  <!-- ═══ THE DECISION RIBBON ═══ -->
+  <section class="ribbon-sec">
+    <div class="lbl">The decision ribbon &mdash; one track per record, one cell per round</div>
+    <div class="filters" id="filters"></div>
+    <div class="ribbon" id="ribbon"></div>
+    <div class="legend">
+      <div><i style="background:var(--paid)"></i> paid</div>
+      <div><i style="background:var(--gate)"></i> a gate intervened</div>
+      <div><i style="background:var(--human)"></i> escalated to a person</div>
+      <div><i style="background:var(--closed)"></i> written off</div>
+      <div><i style="background:var(--defer)"></i> deferred this round</div>
+    </div>
+    <p style="font-size:12px;color:var(--ink-3);margin-top:11px;max-width:700px;line-height:1.6">
+      Select any track to see the full eleven-gate trace behind every decision on that record &mdash;
+      including the gates that passed. Nothing is summarised away: the console holds every gate
+      result from every decision, dictionary-encoded rather than trimmed.
+    </p>
+  </section>
+
+  <!-- ═══ GATE COVERAGE ═══ -->
+  <section class="cov">
+    <div class="lbl" id="cov-head">&mdash;</div>
+    <div class="cov-grid" id="cov-grid"></div>
+    <p style="font-size:12.5px;color:var(--ink-2);margin-top:14px;max-width:790px;line-height:1.6">
+      Every gate above has a direct unit test that forces it to fire. <b>Silent this run</b> means this
+      scenario did not reach it &mdash; not that the code is unexercised. A <b>backstop</b> gate staying
+      quiet is the policy being careful enough that the gate had nothing to catch.
+    </p>
+  </section>
+
+  <div class="foot">
+    <span>Simulated run. Dry-run only &mdash; no request reached a real Razorpay account.</span>
+    <span id="f-head">&mdash;</span>
+  </div>
+</main>
+
+<script>
+const DATA = __DATA__;
+
+const R = p => { const s=p<0?"-":"", a=Math.abs(p);
+  return s+"\u20B9"+Math.floor(a/100).toLocaleString("en-IN")+"."+String(a%100).padStart(2,"0"); };
+const el = id => document.getElementById(id);
+
+const M = DATA.meta, A = DATA.arms, D = DATA.decisions, DICT = DATA.detailDict;
+
+/* ── rail ─────────────────────────────────────────────────────── */
+el("m-seed").textContent = M.seed;
+el("m-rounds").textContent = M.rounds;
+el("m-chain").textContent = M.chain_ok ? "verified" : "BROKEN";
+el("m-chain").style.color = M.chain_ok ? "var(--paid)" : "var(--human)";
+el("m-rep").textContent = M.reportable ? "yes" : "not yet";
+el("m-rep").style.color = M.reportable ? "var(--paid)" : "var(--human)";
+el("f-head").textContent = "head " + M.head.slice(0,20) + "\u2026";
+
+/* ── arms ─────────────────────────────────────────────────────── */
+el("a-base").textContent = R(A.baseline.net);
+el("a-smart").textContent = R(A.smart.net);
+el("a-delta").textContent = (DATA.deltaNet >= 0 ? "+" : "") + R(DATA.deltaNet);
+el("a-delta").style.color = DATA.deltaNet >= 0 ? "var(--paid)" : "var(--human)";
+el("a-verdict").innerHTML = "net of cost<br>and opt-out loss";
+
+el("c-paid").textContent = A.smart.paid + " / " + A.smart.atRisk;
+el("c-verif").textContent = DATA.verified.reconciled + " / " + DATA.verified.recoveredPayments;
+const totalBlocks = DATA.coverage.fired.reduce((a,f)=>a+f.blocks,0);
+el("c-gated").textContent = totalBlocks;
+el("c-opt").textContent = A.smart.optOuts;
+
+el("caveat").innerHTML =
+  "<b>The recovered figure is not the agent's own claim.</b> Every payment it recovered was fed back "
+  + "through the same reconciler that tears apart a settlement file, and <b>" + DATA.verified.reconciled
+  + " of " + DATA.verified.recoveredPayments + "</b> reconciled cleanly. The delta is reported net of "
+  + "outreach cost and the estimated cost of customers annoyed into opting out \u2014 a strategy that spams "
+  + "everyone looks excellent on gross and is quietly destructive on net.";
+
+/* ── the ribbon ───────────────────────────────────────────────── */
+const ACTING = new Set(["RETRY_CHARGE","PAYMENT_LINK_SMS","PAYMENT_LINK_WHATSAPP","DUNNING_EMAIL","VOICE_NUDGE_REGIONAL"]);
+
+/* Group decisions by record, preserving round order. */
+const byRecord = new Map();
+for (const d of D) {
+  if (!byRecord.has(d.id)) byRecord.set(d.id, []);
+  byRecord.get(d.id).push(d);
+}
+
+function cellColour(d) {
+  if (d.paid === 1) return "var(--paid)";
+  if (d.fin === "ESCALATE_HUMAN") return "var(--human)";
+  if (d.fin === "WRITE_OFF") return "var(--closed)";
+  if (d.ok === 0) return "var(--gate)";        /* a gate changed the action */
+  if (d.fin === "NO_ACTION") return "var(--defer)";
+  return "var(--defer)";
+}
+
+function endState(rows) {
+  const last = rows[rows.length-1];
+  if (rows.some(r => r.paid === 1)) return {cls:"paid", txt:"recovered"};
+  if (last.fin === "ESCALATE_HUMAN") return {cls:"human", txt:"to a person"};
+  if (last.fin === "WRITE_OFF") return {cls:"closed", txt:"written off"};
+  return {cls:"closed", txt:"open"};
+}
+
+const FILTERS = {
+  all:      { label:"All records",        test:()=>true },
+  paid:     { label:"Recovered",          test:rows=>rows.some(r=>r.paid===1) },
+  gated:    { label:"A gate intervened",  test:rows=>rows.some(r=>r.ok===0) },
+  human:    { label:"Went to a person",   test:rows=>rows[rows.length-1].fin==="ESCALATE_HUMAN" },
+  optout:   { label:"Customer opted out", test:rows=>rows.some(r=>r.optout===1) },
+};
+let activeFilter = "all";
+let openId = null;
+
+const filtersEl = el("filters");
+Object.entries(FILTERS).forEach(([key, f]) => {
+  const n = [...byRecord.values()].filter(f.test).length;
+  const b = document.createElement("button");
+  b.className = "filt";
+  b.setAttribute("aria-pressed", key === "all" ? "true" : "false");
+  b.innerHTML = '<span class="lbl">'+f.label+'</span><b>'+n+'</b>';
+  b.onclick = () => {
+    activeFilter = key; openId = null;
+    [...filtersEl.children].forEach(c=>c.setAttribute("aria-pressed","false"));
+    b.setAttribute("aria-pressed","true");
+    renderRibbon();
+  };
+  filtersEl.appendChild(b);
+});
+
+function renderRibbon() {
+  const host = el("ribbon");
+  host.innerHTML = "";
+  const test = FILTERS[activeFilter].test;
+  const list = [...byRecord.entries()].filter(([,rows]) => test(rows));
+
+  if (!list.length) {
+    host.innerHTML = '<div style="padding:34px;text-align:center;color:var(--ink-2);font-size:13px">No records matched.</div>';
+    return;
+  }
+
+  list.forEach(([id, rows], i) => {
+    const row = document.createElement("div");
+    row.className = "rb-row" + (openId===id ? " open" : "") + (i<40 ? " anim" : "");
+    if (i<40) row.style.animationDelay = (i*7)+"ms";
+
+    /* One cell per round, so tracks line up vertically and a whole
+       campaign's shape is readable in one downward scan. */
+    let cells = "";
+    for (let r = 0; r < M.rounds; r++) {
+      const d = rows.find(x => x.rd === r);
+      const bg = d ? cellColour(d) : "transparent";
+      const title = d ? ("round "+r+": "+d.prop+(d.ok?"":" \u2192 "+d.fin)) : ("round "+r+": resolved, not worked");
+      cells += '<div class="rb-cell" style="background:'+bg+'" title="'+title+'"></div>';
+    }
+
+    const es = endState(rows);
+    row.innerHTML =
+      '<div class="rb-id">'+id+'</div>'
+      + '<div class="rb-amt">'+R(rows[0].amt)+'</div>'
+      + '<div class="rb-cells">'+cells+'</div>'
+      + '<div class="rb-end"><span class="pill '+es.cls+'">'+es.txt+'</span></div>';
+
+    row.onclick = () => { openId = openId===id ? null : id; renderRibbon(); };
+    host.appendChild(row);
+
+    if (openId === id) {
+      for (const d of rows) {
+        const t = document.createElement("div");
+        t.className = "trace";
+        const gates = d.tr.map((pair, gi) => {
+          const blocked = pair[0]===1;
+          return '<div class="g '+(blocked?"block":"pass")+'">'
+            + '<span class="g-mark">'+(blocked?"\u2717":"\u00b7")+'</span>'
+            + '<span class="g-name">'+DATA.gateNames[gi]+'</span>'
+            + '<span class="g-detail">'+DICT[pair[1]]+'</span></div>';
+        }).join("");
+        t.innerHTML =
+          '<h4>Round '+d.rd+' \u2014 proposed <b>'+d.prop+'</b>'
+            + (d.ok ? ', allowed unchanged' : ', became <b>'+d.fin+'</b>')+'</h4>'
+          + '<div class="meta">seq '+d.q+' \u00b7 hash '+d.h+'\u2026 \u00b7 attempt '+d.att
+            + ' \u00b7 reason '+(d.rsn||"\u2014")+' \u00b7 '+d.mth
+            + (d.paid===1 ? ' \u00b7 PAID' : '')+(d.optout===1?' \u00b7 CUSTOMER OPTED OUT':'')+'</div>'
+          + '<div class="gates">'+gates+'</div>';
+        host.appendChild(t);
+      }
+    }
+  });
+}
+
+/* ── gate coverage ────────────────────────────────────────────── */
+const cov = DATA.coverage;
+el("cov-head").textContent = "Gate coverage \u2014 " + cov.firedCount + " of " + cov.total
+  + " gates fired across " + cov.decisions + " decisions";
+
+const grid = el("cov-grid");
+for (const f of cov.fired) {
+  const c = document.createElement("div");
+  c.className = "cov-cell fired";
+  c.innerHTML = '<b>'+f.gate+'</b><p>Intervened <b class="num">'+f.blocks+'</b> time'+(f.blocks===1?"":"s")+' this run.</p>';
+  grid.appendChild(c);
+}
+for (const s of cov.silent) {
+  const c = document.createElement("div");
+  c.className = "cov-cell";
+  c.innerHTML = '<b>'+s.gate+'<span class="kindtag '+s.kind.replace("-","")+'">'+s.kind+'</span></b><p>'+s.why+'</p>';
+  grid.appendChild(c);
+}
+
+renderRibbon();
+</script>
+</body>
+</html>

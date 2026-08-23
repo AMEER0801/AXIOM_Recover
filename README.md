@@ -46,12 +46,13 @@ This is an active build. Here is exactly what is finished and what is not, so th
 | Customer-response model | Simulates how a test customer would respond to each action, locked before agent logic exists | Done, locked |
 | Payment security layer | Verifies that incoming payment notifications are genuinely from Razorpay and not forged | Done, tested |
 | Razorpay connection | Sends requests to Razorpay's test system safely, with no risk of double-charging | Done, tested |
-| Automated tests | 72 checks that confirm the above claims are actually true | All passing |
+| Automated tests | 103 checks that confirm the above claims are actually true | All passing |
 | Reconciliation engine | Matches payments to settlements, explains gaps, triages what's left | Done, tested |
 | Gate layer (money firewall) | Every bounded/gated guarantee, enforced and unit-tested independently | Done, tested |
-| Recovery loop | The agent logic that calls the gate layer and executes | In progress |
+| Recovery loop | Proposes an action, gates it, executes (dry-run), simulates the outcome, hands it to the reconciler | Done, tested |
 | Ledger console | A single-file screen showing every tie-out, its evidence, and the queue | Done |
-| Recovery dashboard | Live view of the agent choosing and executing actions | In progress |
+| Audit trail | Hash-chained, tamper-evident record of every decision, exportable | Done, tested |
+| Recovery console | Decision ribbon, full gate traces, gate coverage, verified recovery | Done |
 | Sourced assumptions | Replacing placeholder estimates with cited real-world figures | In progress |
 
 ## Architecture
@@ -75,15 +76,17 @@ flowchart LR
   RECON --> LADDER["confidence ladder"]
   LADDER --> UI["ui/ledger.html\ndelta gutter, gap decomposition"]
 
-  ATRISK --> MODEL["frozen response model\nlocked before agent logic exists"]
-  MODEL -.->|"Day 5+"| GATES["gates.js\nbounded action layer"]
-  GATES -.-> LOOP["recovery loop"]
-  LOOP -.-> RECON
+  ATRISK --> POLICY["recover.js\npropose an action"]
+  POLICY --> GATES["gates.js\n11-gate money firewall"]
+  GATES --> EXEC["execute\ndry-run by default"]
+  EXEC --> SIM["frozen response model\nsimulates the outcome, test mode only"]
+  SIM -->|"paid"| EMIT["emit payment_captured\n+ settlement_line"]
+  EMIT --> RECON
 
   SEED["seed.js\ndeterministic batch + answer key"] -.-> LEDGER
 ```
 
-Dashed arrows are not built yet. This diagram is corrected as the system grows rather than drawn once at the start and left to go stale — the two solid-arrow halves above (webhook ingestion and reconciliation) are real and tested; the dashed half (the recovery agent itself) is Day 5 onward.
+Every arrow above is real, tested, and verified against a fresh clone — the loop that recovers a payment and the loop that reconciles it are no longer two separate halves of a diagram; `recover.js`'s output is literally read back into `recon.js`, and there is a test asserting every recovered payment reconciles cleanly when it is.
 
 ---
 
@@ -227,7 +230,152 @@ Neither one cleanly covers what this project actually does. RBI's code governs r
 
 `gates.js` decides. It does not execute, and it does not remember anything between calls — recording that an attempt happened or that money was spent is the executor's job, done only *after* an action actually runs. Keeping the decision function free of side effects is what makes it possible to unit-test every gate in isolation, calling it hundreds of times with fabricated histories, without ever touching a real spend counter or a real webhook.
 
-The actual recovery loop that calls this file, executes the allowed action, and feeds the outcome back into the reconciler is the next piece being built.
+`recover.js` is that executor.
+
+---
+
+## The recovery loop, and the number the whole project rests on
+
+`recover.js` is the file that turns everything above from infrastructure into an agent: **propose → gate → execute (dry-run) → simulate the outcome → hand it back to the reconciler for independent confirmation.**
+
+### Two policies, not one
+
+A single "the agent recovered ₹X" figure is unfalsifiable — there's nothing to compare it to. Every batch runs through **two** policies, against the identical seeded population and the identical gates:
+
+- **`baselinePolicy`** — retry everything, blindly, no branching on reason or channel. This is what a merchant gets with zero intelligence layered on Razorpay.
+- **`smartPolicy`** — a transparent, rule-based policy that reads the same failure-reason taxonomy a merchant already receives from Razorpay: escalate dead-on-arrival reasons immediately rather than wasting an attempt, route business-paused mandates straight to a human (nudging the customer cannot fix a block on the business side), and once retrying has stopped helping, escalate through channels — cheapest first, switching to a regional-language voice nudge for a non-English-locale customer rather than defaulting to English.
+
+Both policies are **swappable behind the same interface**: `gates.js` validates whatever a policy proposes against the same closed vocabulary regardless of where the proposal came from. An LLM-based policy could sit behind this exact interface tomorrow without changing anything downstream of it.
+
+### The claim is the delta, net of cost — and it had to earn that framing
+
+Run at the default window (`npm run recover`):
+
+| | baseline | smart |
+|---|---:|---:|
+| payments recovered | 30 / 120 | 42 / 120 |
+| gross recovered | ₹37,212 | ₹52,105 |
+| direct cost | ₹0 | ₹146 |
+| opt-out loss (estimated) | ₹0 | ₹480 |
+| **net recovered** | **₹37,212** | **₹51,479** |
+
+**Delta: ₹14,267** — smart minus baseline, after cost and after the estimated cost of the one customer it annoyed into opting out. Baseline's cost is genuinely zero because a silent retry costs nothing; smart's advantage has to clear that bar before it counts as an improvement at all, which is why the number is reported net rather than as a raw "amount contacted."
+
+### A measurement mistake this design caught before it reached the README
+
+The first version of this comparison ran for 6 rounds. At that window, **the delta was negative** — the baseline appeared to outperform the smart policy. That wasn't a bug in the policy; it was a bug in stopping the clock too early. Smart's advantage is back-loaded (it comes from switching channels once retrying has failed, which takes a few rounds to play out) while its cost is front-loaded (escalating a dead-on-arrival record costs a little immediately, with no offsetting benefit for that specific record). A short window sees the cost before it sees the benefit, and would have shipped a **wrong conclusion with high confidence** if the comparison hadn't checked its own completeness.
+
+The fix wasn't to pick a rounds count that produced a flattering number. It was to make `runBatch()` report **`stillInProgress`** explicitly — how many records had not yet reached a terminal state — and refuse to let a short window pass silently. `npm run recover -- --rounds 3` still runs, and still prints a loud warning that the comparison it just showed is against a moving target. 8 rounds was chosen because it's the empirically smallest window where **both** policies fully resolve on the default batch — verified by running 6/8/10/14/20 and confirming the paid counts stop changing at 8, not assumed.
+
+### The delta is real, but only one version of it is stable — and that distinction matters more than the headline number
+
+`npm run eval` runs the comparison across 20 independently seeded batches, and reports two different deltas that tell two different stories:
+
+```
+PAYMENTS RECOVERED, delta (smart − baseline), a count:
+    mean     10.1   sd    5.6   cv 55.0%   range [0 … 18]
+    smart recovered MORE payments than baseline in 19/20 batches, fewer in 0/20
+
+NET ₹ RECOVERED, delta (smart − baseline):
+    mean      ₹3,854.24   sd   ₹11,790.04   cv 305.9%
+    range [-₹22,453.84 … ₹24,040.52]
+    smart beat baseline on ₹ in 13/20 batches
+```
+
+The **count-based** delta is the reliable claim: smart recovers more payments than baseline in effectively every batch tried. The **rupee-based** delta is directionally right but genuinely noisy — its spread is dominated by whether one or two high-value `invoice_overdue` records happen to convert in a given random draw, not by the underlying policy being unreliable. Increasing the batch size doesn't fix this on its own, because a handful of large invoices can still swing a bigger total by a proportionally similar amount.
+
+Reporting only the rupee figure would either overstate confidence on a lucky seed or make a policy that is, by the more stable measure, working consistently look shakier than it is. `eval.js` prints both, on purpose, with an explicit warning when the rupee spread exceeds its own mean — which it currently does. **The honest version of this project's headline claim is "recovers more payments, reliably" — not a specific rupee figure, yet.**
+
+### The loop closes: recovered money is independently reconciled, not just claimed
+
+Every payment the simulation marks as paid gets a matching `payment_captured` + `settlement_line` pair, computed the same way `seed.js` computes real settlements (Razorpay's fee and tax deducted). That pair is fed back into `recon.js`, and a test asserts every single recovered payment reconciles cleanly when it is. The file that tears apart a settlement report is the same file that has to agree the recovery actually happened — the agent doesn't get to grade its own homework.
+
+
+---
+
+## The audit trail
+
+Razorpay's stated bar for this track is: *"Every money action explainable, bounded and gated. Show the audit trail and one failure handled gracefully."* `gates.js` covers bounded and gated, and produces a full explanation of every verdict — but until now that explanation lived only in memory, for the length of one process. `audit.js` makes it an artefact.
+
+### Hash-chained, so a quiet edit doesn't stay quiet
+
+Each entry stores the hash of the entry before it, and its own hash covers that link:
+
+```
+hash(n) = sha256( seq | ts | hash(n-1) | canonical(payload) )
+```
+
+Change one amount in entry 3 and entry 3's hash stops matching its own contents. Recompute entry 3's hash and entry 4's `prev_hash` stops matching. `verifyChain()` reports the exact sequence number where the break starts. There are tests for modification, deletion, and reordering — all three are caught.
+
+**This is tamper-EVIDENT, not tamper-PROOF**, and the difference is worth stating rather than letting a reader assume the stronger claim. Anyone who can rewrite the whole file can recompute every hash from their edit onward and produce a chain that verifies perfectly. What this defends against is a casual or partial edit — one changed amount, one deleted inconvenient row, entries shuffled — not a determined attacker with write access. Real tamper-proofing needs an anchor *outside* the file: signing entries with a key the writer doesn't hold, or committing the head hash somewhere append-only. That's the documented upgrade path, not something already here.
+
+### The decision is recorded before the action, not after
+
+An audit log written after the fact records what a system decided it did. This one records what it decided *to* do, then separately what happened — so a crash between the two leaves evidence rather than a gap. A test asserts every `execution` entry is immediately preceded by its own `decision` entry for the same entity: **no action without a recorded reason.**
+
+Every `decision` entry carries the complete eleven-gate trace, not just the gates that blocked — also asserted by test.
+
+### The head hash is a run fingerprint
+
+The audit clock is driven by the run's simulated time, not wall-clock. Two consequences: entries read in the order decisions actually happened, and **the same seed produces a byte-identical chain**, so the head hash can be quoted as a fingerprint of an entire run. Different seed, different hash. Both directions are tested.
+
+### Gate coverage: which gates actually fired, and why the rest didn't
+
+A run that reports "all gates passed" while eight of them never had anything to check is not telling you much. `npm run recover` prints the honest version:
+
+```
+── GATE COVERAGE · 3/11 gates fired across 388 decisions ──
+  ✗ do_not_contact             blocked 2 times
+  ✗ quiet_hours                blocked 108 times
+  ✗ approval_ceiling           blocked 23 times
+
+  silent this run — and why:
+  · kill_switch            [by-design] only fires when a human engages it
+  · action_allowlist       [by-design] both shipped policies emit valid actions only
+  · mandate_charge_block   [backstop] a policy that checks the failure reason first never reaches it
+  · business_paused_no_nudge [backstop] smartPolicy already refuses to propose this nudge
+  · attempt_ceiling        [backstop] both policies self-terminate at or before the ceiling
+  · cooldown               [scenario] fires for blind retry, not for channel escalation
+  · spend_cap_run          [scenario] this run's spend never approaches the cap
+  · spend_cap_day          [scenario] same
+```
+
+Three categories, and the distinction between them is the point. **by-design** gates should never fire in a healthy run. **backstop** gates exist to catch a policy that isn't careful — `smartPolicy` proactively refuses to propose a nudge for a business-paused mandate, so `business_paused_no_nudge` has nothing to catch; that's the policy being good, not the gate being useless. **scenario** gates simply weren't reached by this batch.
+
+Notably, the two policies exercise *different* gates: `baselinePolicy` trips `cooldown` and `mandate_charge_block` (it retries blindly, so it walks into both), while `smartPolicy` trips `quiet_hours` and `do_not_contact` (it messages people, so it meets the rules about messaging people). Neither alone covers the surface.
+
+Every gate has a direct unit test that forces it to fire. **"Silent this run" means this scenario didn't reach it — not that the code is unexercised**, and `gateCoverage()` fails loudly if any silent gate has no recorded explanation.
+
+### A documentation bug this caught
+
+The first version wrote the post-recovery ledger as `post-recovery-ledger.smart.json` and told the reader to run `recon.js` against the directory. Running that command crashed — `recon.js` reads `ledger.json` and `truth.json`. **An instruction that has never been executed is a guess, not documentation.** Fixed by writing the filenames `recon.js` actually expects, and adding `npm run recon:recovered` so the documented next step is a script that runs rather than a sentence that might.
+
+
+---
+
+## The recovery console
+
+`npm run ui:recovery` builds `ui/recovery.html`. Like the ledger console, it opens by double-clicking — no server, no install, no network.
+
+It is a sibling to `ledger.html`: same ledger-paper palette, same typography, same principle that colour carries meaning and nothing else. With one deliberate semantic difference — **in the ledger console red means "exception, something is wrong." Here a gate blocking an action is the system working correctly, not a fault**, so it gets its own colour (a deep indigo that reads as deliberate intervention) rather than the alarm red.
+
+### The decision ribbon
+
+One track per record, one cell per round. Colour tells you what happened in that round — recovered, a gate intervened, escalated to a person, written off, or deferred. Scanning down the ribbon shows the shape of an entire campaign before you read a single figure: where the gates held things back, where money actually came in, where records ended up with a human.
+
+Select any track and it expands to the **full eleven-gate trace behind every decision on that record** — including the gates that passed.
+
+### Compression that is provably lossless, not selective
+
+The raw audit chain for one run is ~706KB, mostly because the same gate explanations repeat across hundreds of decisions. The obvious way to shrink that would be to keep only the gates that blocked and drop the passes.
+
+That would be the wrong fix. `gates.js` emits an entry for every gate on every call *precisely so* nobody has to ask "were the others actually checked?" — and a console that quietly discarded the passes would reintroduce the exact doubt the design exists to remove.
+
+So the detail strings are dictionary-encoded instead: 429 unique strings across 4,268 trace entries, with each trace becoming an array of `[blocked, stringIndex]` pairs. **706KB becomes 81KB with nothing discarded.** A test decodes the whole structure and compares it entry-for-entry against the original — a compression scheme for an audit trail has to be provably lossless, or it is deletion with extra steps.
+
+### The headline number is not the agent's own claim
+
+The console reports **42 payments recovered, 42 independently reconciled**. Every payment the agent recovered is fed back through the same reconciler that tears apart a settlement file, and only what reconciles is reported as verified. The agent does not get to grade its own homework, and the console does not let it.
 
 ---
 
@@ -243,12 +391,16 @@ cp .env.example .env
 # Generate a random value for CONTACT_SALT and paste it into .env:
 node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"
 
-npm test             # runs all 72 automated checks
+npm test             # runs all 103 automated checks
 npm run seed         # generates a reproducible test dataset + answer key
 npm run recon        # reconciles that dataset and scores itself against the answer key
 npm run sweep        # repeats the above across 25 independent datasets
 npm run ui           # builds the ledger console into ui/ledger.html
+npm run ui:recovery  # builds the recovery console into ui/recovery.html
 npm run gates:demo   # 7 scenarios, each tripping exactly one gate, full trace printed
+npm run recover      # runs the recovery loop: baseline vs smart, one batch, full comparison
+npm run eval         # repeats that comparison across 20 independent batches
+npm run recon:recovered  # reconciles the money the recovery loop just recovered
 npm run check        # verifies the locked model hasn't changed, and checks citations
 npm start            # starts the server that receives Razorpay webhooks
 ```
@@ -276,7 +428,7 @@ axiom-recover/
     │   ├── base-rates.json            assumptions behind that simulation (needs citations)
     │   └── FROZEN.json                proof that the model above hasn't been altered
     └── test/
-        └── smoke.js                   72 automated checks
+        └── smoke.js                  103 automated checks
 ```
 
 ### Key engineering decisions
@@ -302,8 +454,9 @@ Both are documented here rather than hidden, because a project that only shows i
 ### What is not yet finished
 
 - The current assumptions in `base-rates.json` are reasonable placeholder estimates, not yet backed by cited sources. This is flagged automatically by `npm run check`, which will not allow results to be called final until this is resolved.
-- The recovery loop that actually calls the gate layer, executes the allowed action against Razorpay, and feeds the outcome back into the reconciler is still being built. The gate layer itself (`gates.js`) is finished and tested.
+- The rupee-value recovery delta is directionally positive but not yet statistically stable at this batch size (see "The recovery loop" section above) — the count-based recovery-rate delta is the claim currently worth relying on.
 - The visual dashboard for the recovery side (as opposed to the reconciliation side, which `ui/ledger.html` already covers) is still being built.
+- `recover.js` always runs in simulate mode — a real "live" mode, where outcomes arrive asynchronously through `index.js`'s webhook receiver instead of being resolved inline by the frozen model, is a documented extension of the same propose/gate/execute spine, not yet built.
 - The mapping between Razorpay's real webhook format and this project's internal data format should be checked against Razorpay's current API documentation before connecting to live data, as APIs can change over time.
 - Spend-cap and approval-ceiling figures in `gates.js` (₹5,000 per run, ₹20,000 per day, ₹10,000 auto-approval threshold) are placeholder business decisions, not citations — unlike the quiet-hours window, nothing regulatory pins these numbers, and they should be set deliberately before this runs against a real merchant's book.
 

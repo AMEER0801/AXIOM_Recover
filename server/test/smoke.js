@@ -27,6 +27,8 @@ const { generate } = require("../seed");
 const { resolve, INTERVENTIONS } = require("../model/response-model.frozen");
 const { classifyFailureReason } = require("../index.js");
 const { evaluateGates, GATE_NAMES, createAttemptLedger, createSpendTracker, createKillSwitch, withinQuietHours, DEFAULT_POLICY } = require("../gates");
+const { baselinePolicy, smartPolicy, runBatch, compareArms, AT_RISK_KINDS } = require("../recover");
+const { createAuditChain, verifyChain, toCSV, gateCoverage, canonical, GENESIS_PREV } = require("../audit");
 
 let pass = 0, fail = 0;
 function t(name, fn) {
@@ -627,6 +629,288 @@ t("withinQuietHours agrees with the gate's own verdict at the boundary hours", (
   assert.strictEqual(withinQuietHours(new Date("2026-08-23T03:29:00.000Z")), false);  // 08:59 IST
   assert.strictEqual(withinQuietHours(new Date("2026-08-23T13:29:00.000Z")), true);   // 18:59 IST
   assert.strictEqual(withinQuietHours(new Date("2026-08-23T13:30:00.000Z")), false);  // 19:00 IST, end exclusive
+});
+
+
+console.log("\nrecover — the loop, and the baseline it must beat");
+
+const rRates = JSON.parse(fs.readFileSync(path.join(__dirname, "..", "model", "base-rates.json"), "utf8"));
+
+t("baseline policy always proposes RETRY_CHARGE until the attempt ceiling, then WRITE_OFF", () => {
+  const hist0 = { count: 0, lastAt: null };
+  assert.strictEqual(baselinePolicy({}, hist0), "RETRY_CHARGE");
+  const histMax = { count: DEFAULT_POLICY.maxAttemptsPerEntity, lastAt: null };
+  assert.strictEqual(baselinePolicy({}, histMax), "WRITE_OFF");
+});
+
+t("smart policy never proposes a nudge for a business-paused mandate", () => {
+  const rec = { method: "emandate", failure: { reason: "mandate_paused_by_business" }, customer: { locale: "en" } };
+  assert.strictEqual(smartPolicy(rec, { count: 0, lastAt: null }), "ESCALATE_HUMAN");
+  assert.strictEqual(smartPolicy(rec, { count: 2, lastAt: null }), "ESCALATE_HUMAN", "still never a nudge, at any attempt count");
+});
+
+t("smart policy still tries a nudge for a customer-paused mandate, once", () => {
+  const rec = { method: "emandate", failure: { reason: "mandate_paused_by_customer" }, customer: { locale: "en" } };
+  assert.strictEqual(smartPolicy(rec, { count: 0, lastAt: null }), "PAYMENT_LINK_WHATSAPP");
+  assert.strictEqual(smartPolicy(rec, { count: 1, lastAt: null }), "ESCALATE_HUMAN", "one try, then hand it to a human — not an infinite nudge loop");
+});
+
+t("smart policy prefers a regional voice nudge over WhatsApp for a non-English locale", () => {
+  const en = { failure: { reason: "insufficient_funds" }, customer: { locale: "en" } };
+  const ta = { failure: { reason: "insufficient_funds" }, customer: { locale: "ta" } };
+  assert.strictEqual(smartPolicy(en, { count: 2, lastAt: null }), "PAYMENT_LINK_WHATSAPP");
+  assert.strictEqual(smartPolicy(ta, { count: 2, lastAt: null }), "VOICE_NUDGE_REGIONAL");
+});
+
+t("smart policy escalates dead-on-arrival reasons on the very first look, wasting no attempt", () => {
+  for (const reason of ["card_expired", "card_blocked", "invalid_account", "mandate_revoked"]) {
+    assert.strictEqual(smartPolicy({ failure: { reason }, customer: { locale: "en" } }, { count: 0, lastAt: null }), "ESCALATE_HUMAN", `${reason} should escalate immediately`);
+  }
+});
+
+t("runBatch never lets a DNC customer receive more than the one message that flips them onto the list", () => {
+  const { ledger } = generate({ seed: 321, records: 150 });
+  const result = runBatch({ ledger, policy: smartPolicy, rates: rRates, seed: 321, rounds: 8 });
+  for (const [entityId, entries] of result.perRecordLog) {
+    let sawDncTrue = false;
+    for (const e of entries) {
+      if (sawDncTrue) {
+        assert.ok(!["PAYMENT_LINK_SMS","PAYMENT_LINK_WHATSAPP","DUNNING_EMAIL","VOICE_NUDGE_REGIONAL"].includes(e.final), `${entityId} was messaged again after opting out`);
+      }
+      if (e.opted_out) sawDncTrue = true;
+    }
+  }
+});
+
+t("a record that gets paid emits a payment_captured + settlement_line pair that reconciles cleanly", () => {
+  const { ledger } = generate({ seed: 55, records: 200 });
+  const result = runBatch({ ledger, policy: smartPolicy, rates: rRates, seed: 55, rounds: 8 });
+  assert.ok(result.paidCount > 0, "expected at least one recovered payment on this seed to test against");
+
+  const combined = [...ledger, ...result.emitted];
+  const recon = reconcile(combined);
+  const paidIds = new Set(result.emitted.filter((r) => r.kind === "payment_captured").map((r) => r.entity.id));
+  for (const row of recon.results) {
+    if (paidIds.has(row.payment_id)) {
+      assert.strictEqual(row.reconciles, true, `recovered payment ${row.payment_id} did not reconcile cleanly`);
+    }
+  }
+});
+
+t("running the same seed twice produces an identical recovery outcome", () => {
+  const { ledger } = generate({ seed: 909, records: 200 });
+  const a = runBatch({ ledger, policy: smartPolicy, rates: rRates, seed: 909, rounds: 8 });
+  const b = runBatch({ ledger, policy: smartPolicy, rates: rRates, seed: 909, rounds: 8 });
+  assert.strictEqual(a.paidCount, b.paidCount);
+  assert.strictEqual(a.grossPaise, b.grossPaise);
+  assert.strictEqual(a.netPaise, b.netPaise);
+});
+
+t("stillInProgress plus resolvedCount always equals the at-risk population", () => {
+  const { ledger } = generate({ seed: 12, records: 200 });
+  const r = runBatch({ ledger, policy: baselinePolicy, rates: rRates, seed: 12, rounds: 3 });   // deliberately short
+  assert.strictEqual(r.resolvedCount + r.stillInProgress, r.atRiskCount);
+});
+
+t("8 rounds is enough for both policies to fully resolve the default batch (no record left mid-flight)", () => {
+  const { ledger } = generate({ seed: 42, records: 200 });
+  const b = runBatch({ ledger, policy: baselinePolicy, rates: rRates, seed: 42, rounds: 8 });
+  const s = runBatch({ ledger, policy: smartPolicy, rates: rRates, seed: 42, rounds: 8 });
+  assert.strictEqual(b.stillInProgress, 0);
+  assert.strictEqual(s.stillInProgress, 0);
+});
+
+t("net recovered is exactly gross minus direct cost minus estimated opt-out loss", () => {
+  const { ledger } = generate({ seed: 77, records: 200 });
+  const r = runBatch({ ledger, policy: smartPolicy, rates: rRates, seed: 77, rounds: 8 });
+  assert.strictEqual(r.netPaise, r.grossPaise - r.costPaise - r.optOutLossPaise);
+});
+
+t("compareArms runs both policies against the identical starting population", () => {
+  const { ledger } = generate({ seed: 88, records: 200 });
+  const cmp = compareArms({ ledger, rates: rRates, seed: 88, rounds: 8 });
+  assert.strictEqual(cmp.baseline.atRiskCount, cmp.smart.atRiskCount);
+  assert.strictEqual(cmp.deltaNetPaise, cmp.smart.netPaise - cmp.baseline.netPaise);
+  assert.strictEqual(cmp.deltaPaidCount, cmp.smart.paidCount - cmp.baseline.paidCount);
+});
+
+t("across 10 independent batches, the smart policy recovers at least as many payments as baseline more often than not", () => {
+  let smartWins = 0;
+  for (let i = 0; i < 10; i++) {
+    const seed = 3000 + i * 13;
+    const { ledger } = generate({ seed, records: 200 });
+    const cmp = compareArms({ ledger, rates: rRates, seed, rounds: 8 });
+    if (cmp.deltaPaidCount > 0) smartWins++;
+  }
+  assert.ok(smartWins >= 7, `smart only out-recovered baseline in ${smartWins}/10 batches — the policy may have regressed`);
+});
+
+
+console.log("\naudit — the tamper-evident chain");
+
+t("an empty chain has the genesis head", () => {
+  const c = createAuditChain();
+  assert.strictEqual(c.head(), GENESIS_PREV);
+  assert.strictEqual(c.length(), 0);
+});
+
+t("each entry links to the one before it", () => {
+  const c = createAuditChain();
+  const a = c.append("run_started", { x: 1 });
+  const b = c.append("decision", { y: 2 });
+  assert.strictEqual(a.prev_hash, GENESIS_PREV);
+  assert.strictEqual(b.prev_hash, a.hash);
+  assert.strictEqual(c.head(), b.hash);
+});
+
+t("a valid chain verifies", () => {
+  const c = createAuditChain();
+  c.append("run_started", { a: 1 });
+  c.append("decision", { b: 2 });
+  c.append("run_ended", { c: 3 });
+  assert.strictEqual(verifyChain(c.entries()).ok, true);
+});
+
+t("modifying an entry's payload breaks verification, and names the entry", () => {
+  const c = createAuditChain();
+  c.append("run_started", { a: 1 });
+  c.append("decision", { amount_paise: 50000 });
+  c.append("run_ended", { c: 3 });
+  const tampered = c.entries().map((e) => ({ ...e, payload: { ...e.payload } }));
+  tampered[1].payload.amount_paise = 999999;
+  const v = verifyChain(tampered);
+  assert.strictEqual(v.ok, false);
+  assert.strictEqual(v.brokenAt, 1);
+});
+
+t("deleting an entry breaks verification", () => {
+  const c = createAuditChain();
+  for (let i = 0; i < 5; i++) c.append("decision", { i });
+  const entries = c.entries();
+  const withHole = [entries[0], entries[1], entries[3], entries[4]];
+  assert.strictEqual(verifyChain(withHole).ok, false);
+});
+
+t("reordering entries breaks verification", () => {
+  const c = createAuditChain();
+  for (let i = 0; i < 4; i++) c.append("decision", { i });
+  const e = c.entries();
+  const swapped = [e[0], e[2], e[1], e[3]];
+  assert.strictEqual(verifyChain(swapped).ok, false);
+});
+
+t("appended entries are frozen — a caller cannot reach back and edit one", () => {
+  const c = createAuditChain();
+  const e = c.append("decision", { a: 1 });
+  assert.throws(() => { e.hash = "forged"; });
+});
+
+t("an unknown entry kind is rejected rather than silently recorded", () => {
+  const c = createAuditChain();
+  assert.throws(() => c.append("not_a_real_kind", {}), /unknown entry kind/);
+});
+
+t("canonical serialisation is key-order independent, so honest files don't false-positive", () => {
+  assert.strictEqual(canonical({ b: 1, a: 2 }), canonical({ a: 2, b: 1 }));
+  assert.notStrictEqual(canonical({ a: 1 }), canonical({ a: 2 }));
+});
+
+t("a real recovery run produces a chain that verifies end to end", () => {
+  const { ledger } = generate({ seed: 42, records: 200 });
+  const r = runBatch({ ledger, policy: smartPolicy, rates: rRates, seed: 42, rounds: 8 });
+  const v = verifyChain(r.audit.entries());
+  assert.strictEqual(v.ok, true, v.reason);
+  assert.ok(r.audit.length() > 100, "expected a substantial chain from a full run");
+});
+
+t("the same seed produces an identical head hash — the run has a reproducible fingerprint", () => {
+  const { ledger } = generate({ seed: 42, records: 200 });
+  const a = runBatch({ ledger, policy: smartPolicy, rates: rRates, seed: 42, rounds: 8 });
+  const b = runBatch({ ledger, policy: smartPolicy, rates: rRates, seed: 42, rounds: 8 });
+  assert.strictEqual(a.audit.head(), b.audit.head());
+});
+
+t("a different seed produces a different head hash", () => {
+  const l1 = generate({ seed: 42, records: 200 }).ledger;
+  const l2 = generate({ seed: 43, records: 200 }).ledger;
+  const a = runBatch({ ledger: l1, policy: smartPolicy, rates: rRates, seed: 42, rounds: 8 });
+  const b = runBatch({ ledger: l2, policy: smartPolicy, rates: rRates, seed: 43, rounds: 8 });
+  assert.notStrictEqual(a.audit.head(), b.audit.head());
+});
+
+t("every executed action has a matching decision entry before it — no action without a recorded reason", () => {
+  const { ledger } = generate({ seed: 42, records: 200 });
+  const r = runBatch({ ledger, policy: smartPolicy, rates: rRates, seed: 42, rounds: 8 });
+  const entries = r.audit.entries();
+  for (let i = 0; i < entries.length; i++) {
+    if (entries[i].kind !== "execution") continue;
+    const prior = entries[i - 1];
+    assert.strictEqual(prior.kind, "decision", `execution at seq ${i} is not immediately preceded by its decision`);
+    assert.strictEqual(prior.payload.entity_id, entries[i].payload.entity_id);
+  }
+});
+
+t("every decision entry carries the complete gate trace, not just the failures", () => {
+  const { ledger } = generate({ seed: 42, records: 200 });
+  const r = runBatch({ ledger, policy: smartPolicy, rates: rRates, seed: 42, rounds: 8 });
+  for (const e of r.audit.entries()) {
+    if (e.kind !== "decision") continue;
+    assert.deepStrictEqual(e.payload.trace.map((t) => t.gate), GATE_NAMES);
+  }
+});
+
+t("gate coverage classifies every silent gate — none left unexplained", () => {
+  const { ledger } = generate({ seed: 42, records: 200 });
+  const r = runBatch({ ledger, policy: smartPolicy, rates: rRates, seed: 42, rounds: 8 });
+  const cov = gateCoverage(r.audit.entries(), GATE_NAMES);
+  assert.deepStrictEqual(cov.unclassified, [], `unclassified silent gates: ${cov.unclassified.join(", ")}`);
+  assert.strictEqual(cov.fired.length + cov.silent.length, GATE_NAMES.length);
+});
+
+t("CSV export has one row per entry plus a header, and escapes correctly", () => {
+  const c = createAuditChain();
+  c.append("decision", { entity_id: "pay_1", proposed: "RETRY_CHARGE", final: "NO_ACTION", allowed: false, trace: [{ gate: "cooldown", result: "block", detail: "a, b \"quoted\"" }] });
+  c.append("outcome", { entity_id: "pay_1", paid: true, amount_paise: 100 });
+  const lines = toCSV(c.entries()).split("\n");
+  assert.strictEqual(lines.length, 3);
+  assert.ok(lines[0].startsWith("seq,ts,kind"));
+  assert.ok(lines[1].includes("cooldown"), "blocked gate should appear in the blocked_by column");
+});
+
+
+console.log("\nrecovery console payload");
+
+t("dictionary encoding is lossless — every decision keeps all 11 gate results", () => {
+  const { ledger } = generate({ seed: 42, records: 200 });
+  const r = runBatch({ ledger, policy: smartPolicy, rates: rRates, seed: 42, rounds: 8 });
+  const decisions = r.audit.entries().filter((e) => e.kind === "decision");
+
+  const dict = [], idx = new Map();
+  const intern = (str) => { if (!idx.has(str)) { idx.set(str, dict.length); dict.push(str); } return idx.get(str); };
+  const encoded = decisions.map((d) => d.payload.trace.map((t) => [t.result === "block" ? 1 : 0, intern(t.detail)]));
+
+  /* Decode and compare against the original, entry for entry. A
+     compression scheme for an audit trail has to be provably
+     lossless or it is just deletion with extra steps. */
+  encoded.forEach((tr, i) => {
+    assert.strictEqual(tr.length, GATE_NAMES.length, `decision ${i} lost gates in encoding`);
+    tr.forEach((pair, gi) => {
+      const orig = decisions[i].payload.trace[gi];
+      assert.strictEqual(pair[0] === 1 ? "block" : "pass", orig.result);
+      assert.strictEqual(dict[pair[1]], orig.detail);
+    });
+  });
+});
+
+t("the console payload's recovered-payment count matches what the reconciler independently confirms", () => {
+  const { ledger } = generate({ seed: 42, records: 200 });
+  const r = runBatch({ ledger, policy: smartPolicy, rates: rRates, seed: 42, rounds: 8 });
+  const post = [...ledger, ...r.emitted];
+  const rec = reconcile(post);
+  const recoveredIds = new Set(r.emitted.filter((x) => x.kind === "payment_captured").map((x) => x.entity.id));
+  const rows = rec.results.filter((x) => recoveredIds.has(x.payment_id));
+  assert.strictEqual(rows.length, r.paidCount, "every recovered payment should appear in the reconciler");
+  assert.strictEqual(rows.filter((x) => x.reconciles).length, r.paidCount, "every recovered payment should reconcile cleanly");
 });
 
 console.log(`\n${pass} passed, ${fail} failed\n`);
