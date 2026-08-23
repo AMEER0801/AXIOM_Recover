@@ -192,7 +192,7 @@ function makeSettledPair({ record, action, seed, roundIndex }) {
  * @param {Date}    [a.startAt]
  * @param {object}  [a.policyConfig] gate policy overrides (spend caps etc.)
  */
-function runBatch({ ledger, policy, rates, seed, rounds = 6, hoursPerRound = 30, startAt = new Date("2026-08-01T06:00:00.000Z"), policyConfig }) {
+async function runBatch({ ledger, policy, rates, seed, rounds = 6, hoursPerRound = 30, startAt = new Date("2026-08-01T06:00:00.000Z"), policyConfig }) {
   const killSwitch = createKillSwitch();
   const attempts = createAttemptLedger();
   const spend = createSpendTracker();
@@ -234,7 +234,13 @@ function runBatch({ ledger, policy, rates, seed, rounds = 6, hoursPerRound = 30,
       if (resolved.has(record.entity.id)) continue;
 
       const hist = attempts.get(record.entity.id);
-      const proposed = policy(record, hist, rates);
+      /* await, not a direct call — baselinePolicy and smartPolicy are
+         plain synchronous functions and return immediately either
+         way, so this costs them nothing. It is what lets an async
+         policy (llm-policy.js's llmPolicy, a real network call)
+         plug into the exact same slot without runBatch needing to
+         know or care which kind of policy it was handed. */
+      const proposed = await policy(record, hist, rates);
       const gateResult = evaluateGates({ record, proposedAction: proposed, rates, killSwitch, attempts, spend, policy: policyConfig, now });
 
       const entry = { round, at: now.toISOString(), proposed, final: gateResult.finalAction, allowed: gateResult.allowed, paid: false, opted_out: false, cost_paise: 0 };
@@ -366,9 +372,9 @@ function runBatch({ ledger, policy, rates, seed, rounds = 6, hoursPerRound = 30,
  * comparison. This — not either arm alone — is the number the
  * project's founding claim rests on.
  */
-function compareArms({ ledger, rates, seed, rounds, hoursPerRound, startAt, policyConfig }) {
-  const baseline = runBatch({ ledger, policy: baselinePolicy, rates, seed, rounds, hoursPerRound, startAt, policyConfig });
-  const smart = runBatch({ ledger, policy: smartPolicy, rates, seed, rounds, hoursPerRound, startAt, policyConfig });
+async function compareArms({ ledger, rates, seed, rounds, hoursPerRound, startAt, policyConfig }) {
+  const baseline = await runBatch({ ledger, policy: baselinePolicy, rates, seed, rounds, hoursPerRound, startAt, policyConfig });
+  const smart = await runBatch({ ledger, policy: smartPolicy, rates, seed, rounds, hoursPerRound, startAt, policyConfig });
   return {
     baseline, smart,
     deltaNetPaise: smart.netPaise - baseline.netPaise,
@@ -379,6 +385,7 @@ function compareArms({ ledger, rates, seed, rounds, hoursPerRound, startAt, poli
 
 /* ── CLI ──────────────────────────────────────────────────────── */
 if (require.main === module) {
+(async () => {
   const fs = require("fs");
   const path = require("path");
   const { generate } = require("./seed");
@@ -402,7 +409,7 @@ if (require.main === module) {
   const rates = JSON.parse(fs.readFileSync(path.join(__dirname, "model", "base-rates.json"), "utf8"));
   const { ledger } = generate({ seed, records });
 
-  const cmp = compareArms({ ledger, rates, seed, rounds });
+  const cmp = await compareArms({ ledger, rates, seed, rounds });
 
   const pct = (n, d) => (d ? ((n / d) * 100).toFixed(1) + "%" : "\u2014");
   const row = (label, b, s) => console.log(`  ${label.padEnd(24)} ${String(b).padStart(12)}   ${String(s).padStart(12)}`);
@@ -490,6 +497,64 @@ if (require.main === module) {
   console.log(`    audit.smart.csv                   the scannable view`);
   console.log(`    comparison.json                   baseline vs smart totals`);
   console.log("");
+
+  /* ── the optional third arm ────────────────────────────────────
+     Off by default: it needs GROQ_API_KEY, needs network access,
+     and is NOT swept across seeds the way the other two arms are —
+     an LLM's output is not guaranteed reproducible run to run even
+     at temperature 0, and repeating an unreliable measurement 20
+     times does not make it reliable, it makes it an expensive
+     unreliable measurement. So this runs once, on a smaller batch,
+     and says exactly that.
+
+     On money: Groq's free tier is genuinely free, gated by rate
+     limits (30 requests/minute) rather than a per-token charge —
+     verified against Groq's current docs, not assumed. Every call
+     is paced to stay under that limit, which is also why this is
+     slow: 20 records over 4 rounds is up to 80 calls, and at ~2.1s
+     apart that is a couple of minutes of wall-clock time for what
+     the other two arms finish instantly. That trade is the actual
+     price of "zero investment," paid in time instead of money. */
+  if (process.argv.includes("--llm")) {
+    if (!process.env.GROQ_API_KEY) {
+      console.log(`  \u2500\u2500 --llm requested, but GROQ_API_KEY is not set \u2500\u2500`);
+      console.log(`  Get a free key (no card required) at https://console.groq.com/keys, set`);
+      console.log(`  GROQ_API_KEY, and re-run. This arm makes real network calls and is skipped`);
+      console.log(`  rather than faked \u2014 there is no offline stand-in for "what did the model say."\n`);
+    } else {
+      const { llmPolicy, FREE_TIER_RPM, PACE_MS } = require("./llm-policy");
+      const llmRecords = Number(arg("llm-records", 20));
+      const llmRounds = Number(arg("llm-rounds", 4));
+      const maxCalls = llmRecords * llmRounds;
+      const estSeconds = Math.ceil((maxCalls * PACE_MS) / 1000);
+
+      console.log(`\u2500\u2500 LLM ARM (Groq, free tier) \u2500\u2500 seed ${seed} \u00b7 ${llmRecords} records \u00b7 ${llmRounds} rounds \u2500\u2500`);
+      console.log(`  Paced to stay under Groq's free-tier cap of ${FREE_TIER_RPM} requests/minute \u2014 up to`);
+      console.log(`  ${maxCalls} calls, so this may take up to ~${estSeconds}s. Cost: \u20B90.00 on the free tier,`);
+      console.log(`  gated by rate limit rather than billed per token.`);
+      console.log(`  This run is NOT swept across seeds like the two arms above, and is not`);
+      console.log(`  guaranteed to reproduce exactly on a second run \u2014 both facts are the point,`);
+      console.log(`  not an oversight. See README for why.\n`);
+
+      const { ledger: llmLedger } = generate({ seed, records: llmRecords });
+      const t0 = Date.now();
+      const llmResult = await runBatch({ ledger: llmLedger, policy: llmPolicy, rates, seed, rounds: llmRounds });
+      const elapsedS = ((Date.now() - t0) / 1000).toFixed(1);
+
+      const smartOnSameBatch = await runBatch({ ledger: llmLedger, policy: smartPolicy, rates, seed, rounds: llmRounds });
+      const baseOnSameBatch = await runBatch({ ledger: llmLedger, policy: baselinePolicy, rates, seed, rounds: llmRounds });
+
+      const rowL = (label, b, s2, l) => console.log(`  ${label.padEnd(22)} ${String(b).padStart(12)}   ${String(s2).padStart(12)}   ${String(l).padStart(12)}`);
+      console.log(`  ${"".padEnd(22)} ${"baseline".padStart(12)}   ${"smart".padStart(12)}   ${"llm".padStart(12)}`);
+      rowL("paid", baseOnSameBatch.paidCount, smartOnSameBatch.paidCount, llmResult.paidCount);
+      rowL("NET recovered", rupees(baseOnSameBatch.netPaise), rupees(smartOnSameBatch.netPaise), rupees(llmResult.netPaise));
+      console.log(`\n  wall-clock time for the LLM arm: ${elapsedS}s (${llmRecords} records \u00d7 up to ${llmRounds} rounds of API calls)`);
+      console.log(`  smart beat llm on this single run: ${smartOnSameBatch.netPaise > llmResult.netPaise ? "yes" : "no"}`);
+      console.log(`  \u2014 a single run either way is an anecdote, not a verdict. Re-run with a fresh`);
+      console.log(`  seed before drawing a conclusion; the number will move.\n`);
+    }
+  }
+})();
 }
 
 module.exports = {

@@ -46,13 +46,14 @@ This is an active build. Here is exactly what is finished and what is not, so th
 | Customer-response model | Simulates how a test customer would respond to each action, locked before agent logic exists | Done, locked |
 | Payment security layer | Verifies that incoming payment notifications are genuinely from Razorpay and not forged | Done, tested |
 | Razorpay connection | Sends requests to Razorpay's test system safely, with no risk of double-charging | Done, tested |
-| Automated tests | 103 checks that confirm the above claims are actually true | All passing |
+| Automated tests | 120 checks that confirm the above claims are actually true | All passing |
 | Reconciliation engine | Matches payments to settlements, explains gaps, triages what's left | Done, tested |
 | Gate layer (money firewall) | Every bounded/gated guarantee, enforced and unit-tested independently | Done, tested |
 | Recovery loop | Proposes an action, gates it, executes (dry-run), simulates the outcome, hands it to the reconciler | Done, tested |
 | Ledger console | A single-file screen showing every tie-out, its evidence, and the queue | Done |
 | Audit trail | Hash-chained, tamper-evident record of every decision, exportable | Done, tested |
 | Recovery console | Decision ribbon, full gate traces, gate coverage, verified recovery | Done |
+| LLM policy (third arm) | An actual model proposes actions, validated by the same gates | Done, tested |
 | Sourced assumptions | Replacing placeholder estimates with cited real-world figures | In progress |
 
 ## Architecture
@@ -377,6 +378,79 @@ So the detail strings are dictionary-encoded instead: 429 unique strings across 
 
 The console reports **42 payments recovered, 42 independently reconciled**. Every payment the agent recovered is fed back through the same reconciler that tears apart a settlement file, and only what reconciles is reported as verified. The agent does not get to grade its own homework, and the console does not let it.
 
+
+---
+
+## A third arm: does an LLM actually do better than hand-written rules?
+
+Every decision up to this point has been rule-based — transparent and reproducible, but on an AI buildathon that invites a fair question: does an LLM actually outperform a person's rules, or does it just sound more convincing? `llm-policy.js` exists to let that be *measured* rather than assumed, and losing to `smartPolicy` is a legitimate, reportable outcome here, not a result to bury.
+
+### Zero investment, checked, not assumed
+
+The build budget for this project is genuinely zero — not a slogan. The first version of this arm called a paid API; the per-call cost was small (paise, not rupees) but it was not zero, and that mismatch with the stated budget was a fair thing to flag and fix.
+
+The replacement is **Groq's free tier**, checked against Groq's own current terms rather than remembered: no credit card, gated by rate limits rather than a per-token charge — 30 requests/minute, 6,000 tokens/minute, 14,400 requests/day, at the organisation level. Source: [console.groq.com/docs/rate-limits](https://console.groq.com/docs/rate-limits).
+
+**A second thing checking-rather-than-assuming caught:** the obvious small/fast model choice, `llama-3.1-8b-instant`, is what memory alone would suggest. Checking Groq's live deprecations page before writing this found Groq announced its retirement on June 17, 2026 and shut it down on August 16, 2026 — before this file was written. Shipping that model string would have failed on the first call, on every machine, permanently, and looked like a mystery bug to anyone who hit it. The verified current replacement — `openai/gpt-oss-20b` — is what this project actually uses. Source: [console.groq.com/docs/deprecations](https://console.groq.com/docs/deprecations).
+
+### What "zero investment" actually costs: time, not money
+
+A free tier's 30-requests-per-minute cap means roughly one call every two seconds is already the ceiling. `llm-policy.js` paces every call to stay under that, and retries a `429` with backoff rather than treating a rate limit as a hard failure. The honest trade this makes: `npm run recover:llm`'s default (20 records, 4 rounds, up to 80 calls) can take a couple of minutes of wall-clock time — money traded for time is the actual price of zero investment, not a free lunch.
+
+### What is genuinely different about this arm — stated up front
+
+`baselinePolicy` and `smartPolicy` are pure, synchronous, and perfectly reproducible: same seed, same output, forever. The LLM arm is none of those things:
+
+- It needs `GROQ_API_KEY` and network access. Absent it, `npm run recover:llm` **fails closed with a clear message and a link to get a free key** rather than silently substituting a different policy and calling the comparison complete.
+- Its output is **not guaranteed byte-identical across runs**, even at temperature 0. This is why `eval.js`'s 20-seed stability sweep is deliberately **not** run against this arm: repeating an unreliable measurement 20 times doesn't make it reliable, it makes it an expensive unreliable measurement.
+- Cost is reported honestly rather than estimated: `estimateUsdCost()` returns exactly `$0` on the free tier, and **refuses to guess a paid-tier price** if a caller ever asks for one without supplying a verified rate — inventing a plausible-looking number would be worse than admitting the project hasn't checked it.
+
+### The model's output is untrusted input, exactly like a webhook payload
+
+Whatever text the model returns is parsed defensively and validated against the exact same closed `INTERVENTIONS` vocabulary `gates.js` already enforces. This is also the **first policy in the project that can genuinely produce an invalid proposal** in normal operation — `baselinePolicy` and `smartPolicy` only ever emit valid actions by construction, so until now `gates.js`'s `action_allowlist` gate was exercised only by a fabricated bad string in a unit test. A model that hallucinates `"TRANSFER_ALL_FUNDS"` or wraps its answer in a sentence gets coerced to `NO_ACTION` and logged, the same treatment any other malformed input gets — proven by tests with a mocked API response, not assumed.
+
+A network failure or a non-rate-limit HTTP error also degrades to `NO_ACTION` rather than crashing the batch; a `429` specifically gets a real backoff-and-retry (up to 3 attempts) before giving up, since a free tier's rate limit is an expected condition, not an exceptional one.
+
+### A bug this caused, and the bug it then caused finding the first one
+
+Adding a genuinely async policy meant `runBatch()` and `compareArms()` had to become `async` (they now `await` whichever policy they're given, so a synchronous rule-based policy and a real network call share one code path with zero special-casing). That, in turn, exposed a real defect in the test harness: `t()` was calling test functions **without awaiting them**, so an async test that returned a rejected promise printed `ok` anyway — the rejection became an unhandled rejection attributed to nothing, while the summary line still said the test passed. Verified, not assumed: a working async assertion was deliberately broken and the old harness kept reporting success.
+
+Fixed by making `t()` `await` its test function and wrapping the whole suite in one `async main()`. And then, five minutes later, adding the new LLM-policy tests **reintroduced the identical bug** — bare `t(...)` calls, fire-and-forget promises inside an async function, with no crash, no `FAIL`, and the pass count simply not moving. The fix for one instance of a bug class does not prevent the next instance of the same class — which is why the suite now includes a test that reads its own source file and asserts every `t(` call is preceded by `await`. Deliberately reintroducing the bug a third time (to check the check) reports the exact broken line number.
+
+### How to actually run it
+
+```bash
+# Free, no card required — takes about 30 seconds:
+# https://console.groq.com/keys
+export GROQ_API_KEY=gsk_...
+npm run recover:llm
+```
+
+Prints a three-way comparison — baseline, smart, and the LLM — on the same seeded batch, states the estimated wall-clock time up front, and says plainly that a single run either way is an anecdote, not a verdict.
+
+
+---
+
+## The interface, and the design decisions behind it
+
+Three files: `ui/index.html`, the entry point, and the two consoles it links to. Open `index.html` first.
+
+### Why a cover page, not a bigger README
+
+Two consoles already existed with no page connecting them — a reviewer had to know to look inside `ui/` and guess which file to open first. That reads as two prototypes a developer happened to build, not a finished product. `index.html` is deliberately framed as the **title and contents page of the same ledger**, not a separate marketing site in a different visual language: same paper, same ink, same rule, a bound spine down the left edge with the same document metaphor the consoles already use. Its only two links go to `ledger.html` and `recovery.html`.
+
+### A dark theme, designed on its own terms
+
+An earlier review suggested a "Razorpay dark console" — navy background, neon cyan accents, glowing borders. Two problems with taking that literally: it doesn't fit the ledger metaphor this project already committed to (a settlement reconciliation is a document, not a live-telemetry dashboard), and it is close to one of the generic looks AI-assisted design tools default to — a near-black background with one bright accent colour, regardless of subject.
+
+So the dark theme here — **Night Ledger** — was designed rather than copied: every semantic colour keeps the *same hue family* it has in daylight (the tied-out green is still a green, the exception red is still a red), recalibrated for contrast against a warm dark charcoal rather than swapped for an unrelated neon palette. Moving between light and dark should feel like reading the same instrument by different light, not switching to a different product. It's an option, not a replacement — light is still the default, since a reconciliation reads more like a printed statement than a live dashboard.
+
+The choice persists across pages via a URL parameter (`?theme=dark`) rather than browser storage, deliberately — these files are opened both as standalone downloads and as inline previews in this conversation, and a URL parameter behaves identically in both, where `localStorage` would not.
+
+### Numbers settle, they don't just appear
+
+The handful of true hero figures — the ledger's tie-out amounts, the recovery arms' net totals — count up over ~700ms instead of appearing instantly, the way a mechanical counter settles on a final value. Every other number on both pages — table rows, ribbon cells, gate coverage cards — still renders immediately. Animating everything would make the page feel busy rather than considered; this is spent in exactly the two or three places it earns its keep, and `prefers-reduced-motion` skips it entirely.
+
 ---
 
 ## For technical reviewers
@@ -391,15 +465,17 @@ cp .env.example .env
 # Generate a random value for CONTACT_SALT and paste it into .env:
 node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"
 
-npm test             # runs all 103 automated checks
+npm test             # runs all 120 automated checks
 npm run seed         # generates a reproducible test dataset + answer key
 npm run recon        # reconciles that dataset and scores itself against the answer key
 npm run sweep        # repeats the above across 25 independent datasets
 npm run ui           # builds the ledger console into ui/ledger.html
 npm run ui:recovery  # builds the recovery console into ui/recovery.html
+# then open ui/index.html — the cover page that links to both
 npm run gates:demo   # 7 scenarios, each tripping exactly one gate, full trace printed
 npm run recover      # runs the recovery loop: baseline vs smart, one batch, full comparison
 npm run eval         # repeats that comparison across 20 independent batches
+npm run recover:llm  # third arm: a real LLM (Groq, free tier, no card) proposes actions
 npm run recon:recovered  # reconciles the money the recovery loop just recovered
 npm run check        # verifies the locked model hasn't changed, and checks citations
 npm start            # starts the server that receives Razorpay webhooks
@@ -428,7 +504,7 @@ axiom-recover/
     │   ├── base-rates.json            assumptions behind that simulation (needs citations)
     │   └── FROZEN.json                proof that the model above hasn't been altered
     └── test/
-        └── smoke.js                  103 automated checks
+        └── smoke.js                  120 automated checks
 ```
 
 ### Key engineering decisions

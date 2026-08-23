@@ -4,6 +4,16 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>AXIOM RECOVER — ledger</title>
+<script>
+/* Runs before anything paints, so a shared link with ?theme=dark
+   never flashes light-then-dark. The toggle's click handler (in
+   the main script, once DATA is loaded) is the only other place
+   this attribute is touched. */
+(function(){
+  var t = new URLSearchParams(location.search).get("theme") === "dark" ? "dark" : "light";
+  document.documentElement.setAttribute("data-theme", t);
+})();
+</script>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Archivo:wght@600;700&family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600&display=swap" rel="stylesheet">
@@ -36,13 +46,44 @@
   --owed-wash:#8A671414;
   --break-wash:#9E2A2B14;
 
+  --shadow:0 1px 2px #13182208, 0 8px 24px -12px #13182222;
+
   --mono:"IBM Plex Mono",ui-monospace,Menlo,monospace;
   --sans:"IBM Plex Sans",system-ui,-apple-system,sans-serif;
   --disp:"Archivo","Archivo Narrow",var(--sans);
 }
 
-*{box-sizing:border-box;margin:0;padding:0}
-html{-webkit-text-size-adjust:100%}
+/* ── NIGHT LEDGER ──────────────────────────────────────────────
+   Not a different product — the same ledger, read by lamplight.
+   Every hue keeps its family (green stays green, ochre stays
+   ochre, the break red stays red) with lightness and saturation
+   recalibrated for a dark ground, rather than swapping in the
+   generic dashboard pairing of near-black plus one neon accent.
+   Paper is a warm-neutral charcoal, not navy — the ledger changed
+   rooms, not identity. */
+:root[data-theme="dark"]{
+  --paper:#15171B;
+  --sheet:#1C1F24;
+  --ink:#ECEEF1;
+  --ink-2:#9CA3AE;
+  --ink-3:#6B7280;
+  --rule:#2D3138;
+  --rule-soft:#262A30;
+
+  --tied:#3FB893;
+  --owed:#DDAB49;
+  --break:#E5696B;
+
+  --tied-wash:#3FB89322;
+  --owed-wash:#DDAB4922;
+  --break-wash:#E5696B22;
+
+  --shadow:0 1px 2px #00000030, 0 12px 28px -14px #00000066;
+}
+
+*{box-sizing:border-box;margin:0;padding:0;transition:background-color .18s ease,border-color .18s ease,color .18s ease}
+html{-webkit-text-size-adjust:100%;color-scheme:light}
+html[data-theme="dark"]{color-scheme:dark}
 body{
   background:var(--paper);color:var(--ink);
   font:400 14px/1.5 var(--sans);
@@ -72,6 +113,16 @@ body{
 .rail-meta div{display:flex;gap:7px;align-items:baseline}
 .rail-meta b{font-family:var(--mono);font-weight:500;font-size:12px}
 
+.theme-btn{
+  display:flex;flex-direction:column;align-items:flex-start;gap:5px;
+  background:var(--sheet);border:1px solid var(--rule);padding:6px 12px;
+  cursor:pointer;font:inherit;color:inherit;box-shadow:var(--shadow);
+}
+.theme-btn:hover{border-color:var(--ink-3)}
+.theme-btn b{font-family:var(--disp);font-weight:700;font-size:11px;letter-spacing:.04em}
+.theme-btn[aria-pressed="true"] b::before{content:"\\263D  "}
+.theme-btn[aria-pressed="false"] b::before{content:"\\2600  "}
+
 /* ── the tie-out (hero) ───────────────────────────────────────── */
 .tieout{padding:38px 0 30px;border-bottom:1px solid var(--rule)}
 .tie-grid{
@@ -91,20 +142,20 @@ body{
   height:100%;min-height:96px;display:flex;flex-direction:column;
   align-items:center;justify-content:center;gap:8px;
   border-left:1px solid var(--rule);border-right:1px solid var(--rule);
-  background:var(--sheet);
+  background:var(--sheet);box-shadow:var(--shadow);
 }
 .tie-delta{font-family:var(--mono);font-size:17px;font-weight:600}
 .tie-verdict{font-family:var(--disp);font-size:9px;letter-spacing:.13em;text-transform:uppercase}
 
 .gapbar{margin-top:28px}
-.gapbar-track{display:flex;height:26px;margin-top:9px;border:1px solid var(--rule);background:var(--sheet);overflow:hidden}
+.gapbar-track{display:flex;height:26px;margin-top:9px;border:1px solid var(--rule);background:var(--sheet);overflow:hidden;box-shadow:var(--shadow)}
 .gapbar-track span{display:block;transition:none}
 .gapbar-legend{display:flex;gap:22px;margin-top:9px;flex-wrap:wrap}
 .gapbar-legend div{display:flex;align-items:baseline;gap:7px;font-size:12px;color:var(--ink-2)}
 .gapbar-legend i{width:9px;height:9px;display:inline-block;flex:none;transform:translateY(-1px)}
 .gapbar-legend b{font-family:var(--mono);font-weight:500;color:var(--ink)}
 .gapbar-note{font-size:12px;color:var(--ink-3);margin-top:11px;max-width:660px;line-height:1.55}
-.counts{display:flex;gap:0;margin-top:30px;border:1px solid var(--rule);background:var(--sheet)}
+.counts{display:flex;gap:0;margin-top:30px;border:1px solid var(--rule);background:var(--sheet);box-shadow:var(--shadow)}
 .count{flex:1;padding:14px 18px;border-right:1px solid var(--rule-soft)}
 .count:last-child{border-right:0}
 .count b{display:block;font-family:var(--mono);font-size:22px;font-weight:500;margin-top:5px;line-height:1}
@@ -206,6 +257,9 @@ body{
 .ledger tbody tr.pay{animation:settle .26s ease-out backwards}
 .gut-bar{animation:draw .4s cubic-bezier(.2,.8,.3,1) backwards}
 @media (prefers-reduced-motion:reduce){*{animation:none !important;transition:none !important}}
+/* the reduced-motion rule above already blanks the global transition
+   declared on * — restated here only as documentation, no separate
+   rule is needed since the selector is already universal. */
 
 :focus-visible{outline:2px solid var(--ink);outline-offset:2px}
 
@@ -229,6 +283,9 @@ body{
       <div><span class="lbl">records</span><b id="m-rec">—</b></div>
       <div><span class="lbl">fee band</span><b id="m-band">—</b></div>
       <div><span class="lbl">reportable</span><b id="m-rep">—</b></div>
+      <button class="theme-btn" id="theme-btn" type="button" aria-pressed="false">
+        <span class="lbl">Theme</span><b id="theme-label">Day</b>
+      </button>
     </div>
   </div>
 </header>
@@ -360,9 +417,48 @@ const expTotal = ROWS.reduce((a,r)=>a+r.expected_paise,0);
 const setTotal = ROWS.reduce((a,r)=>a+r.settled_paise,0);
 const gap = setTotal - expTotal;
 
-el("t-exp").textContent = R(expTotal);
-el("t-set").textContent = R(setTotal);
-el("t-delta").textContent = gap === 0 ? "\u20B90.00" : R(gap);
+/* ── theme toggle ─────────────────────────────────────────────
+   The attribute was already set once, synchronously, in <head>,
+   before this script even runs — this only wires the button and
+   keeps the URL in sync so a reload or a shared link preserves
+   the choice. No localStorage: this file is opened both as a
+   downloaded standalone page and, in this conversation, as a
+   rendered artifact — a URL parameter works identically in both,
+   where browser storage would not. */
+(function initThemeToggle(){
+  const btn = el("theme-btn"), label = el("theme-label");
+  const paint = (t) => { label.textContent = t === "dark" ? "Night" : "Day"; btn.setAttribute("aria-pressed", t === "dark"); };
+  paint(document.documentElement.getAttribute("data-theme") || "light");
+  btn.onclick = () => {
+    const next = document.documentElement.getAttribute("data-theme") === "dark" ? "light" : "dark";
+    document.documentElement.setAttribute("data-theme", next);
+    paint(next);
+    const url = new URL(location.href);
+    next === "dark" ? url.searchParams.set("theme", "dark") : url.searchParams.delete("theme");
+    history.replaceState(null, "", url);
+  };
+})();
+
+/* ── count-up ─────────────────────────────────────────────────
+   Reserved for the hero figures only — the tie-out amounts and
+   nothing else. Everywhere else on the page renders its numbers
+   immediately; spending this on every figure would make the page
+   feel busy rather than considered. */
+const REDUCE_MOTION = matchMedia("(prefers-reduced-motion: reduce)").matches;
+function countUp(target, node, format) {
+  if (REDUCE_MOTION) { node.textContent = format(target); return; }
+  const t0 = performance.now(), dur = 700;
+  (function tick(now) {
+    const p = Math.min(1, (now - t0) / dur);
+    const eased = 1 - Math.pow(1 - p, 3);
+    node.textContent = format(Math.round(target * eased));
+    if (p < 1) requestAnimationFrame(tick);
+  })(t0);
+}
+
+countUp(expTotal, el("t-exp"), R);
+countUp(setTotal, el("t-set"), R);
+countUp(gap, el("t-delta"), (v) => (v === 0 ? "\u20B90.00" : R(v)));
 el("t-delta").style.color = gap === 0 ? "var(--tied)" : "var(--break)";
 el("t-verdict").textContent = gap === 0 ? "ties out" : "does not tie";
 el("t-verdict").style.color = gap === 0 ? "var(--tied)" : "var(--break)";

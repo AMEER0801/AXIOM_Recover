@@ -21,10 +21,10 @@ const { compareArms } = require("./recover");
 const { stats } = require("./sweep");
 const { rupees } = require("./lib/schema");
 
-function runOne(seed, records, rounds) {
+async function runOne(seed, records, rounds) {
   const rates = JSON.parse(fs.readFileSync(path.join(__dirname, "model", "base-rates.json"), "utf8"));
   const { ledger } = generate({ seed, records });
-  const cmp = compareArms({ ledger, rates, seed, rounds });
+  const cmp = await compareArms({ ledger, rates, seed, rounds });
   return {
     deltaNet: cmp.deltaNetPaise,
     deltaPaidCount: cmp.deltaPaidCount,
@@ -38,13 +38,21 @@ function runOne(seed, records, rounds) {
 }
 
 if (require.main === module) {
+(async () => {
   const arg = (n, d) => { const i = process.argv.indexOf(`--${n}`); return i > -1 && process.argv[i + 1] ? process.argv[i + 1] : d; };
   const nSeeds = Number(arg("seeds", 20));
   const records = Number(arg("records", 200));
   const rounds = Number(arg("rounds", 8));
 
   const seeds = Array.from({ length: nSeeds }, (_, i) => 2000 + i * 11);
-  const runs = seeds.map((s) => runOne(s, records, rounds));
+  /* Sequential, not Promise.all — a Promise.all would fire every
+     seed's API calls (in the --llm-comparable future, or simply
+     out of caution now) concurrently, which is fine for the pure
+     deterministic arms but would be indistinguishable from a
+     thundering-herd retry storm if this file is ever pointed at
+     the LLM policy. One seed finishes before the next starts. */
+  const runs = [];
+  for (const s of seeds) runs.push(await runOne(s, records, rounds));
 
   const totalInProgress = runs.reduce((a, r) => a + r.stillInProgress, 0);
   const netStats = stats(runs.map((r) => r.deltaNet));
@@ -97,6 +105,7 @@ if (require.main === module) {
   }
 
   console.log("");
+})();
 }
 
 module.exports = { runOne };
