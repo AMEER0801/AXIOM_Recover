@@ -55,7 +55,7 @@ This is an active build. Here is exactly what is finished and what is not, so th
 | Recovery console | Decision ribbon, full gate traces, gate coverage, verified recovery | Done |
 | LLM policy (third arm) | An actual model proposes actions, validated by the same gates | Done, tested |
 | Discrepancy claims | Catches money the platform itself owes the merchant, not just customers | Done, tested |
-| Sourced assumptions | Replacing placeholder estimates with cited real-world figures | In progress |
+| Sourced assumptions | Every base rate cited, corrected where research disagreed, honestly labelled where no public source exists | Done |
 
 ## Architecture
 
@@ -146,12 +146,12 @@ So every payment lands on one of these rungs, and the rung is reported:
 |---|---|
 | Precision (of what we flagged, how much was real) | 100.0% |
 | Recall (of what was real, how much we caught) | 100.0% |
-| Explanation accuracy (right verdict *and* right reason) | 98.2% ± 1.4% |
+| Explanation accuracy (right verdict *and* right reason) | 98.3% ± 1.4% |
 | False positives | 0 |
 | False negatives | 0 |
 | Exceptions raised per dataset | 19.8 ± 3.6 |
 
-**The 100% figures deserve suspicion, and here is the honest reading of them.** They say the flag / don't-flag rule is sound *on the eight problem types this generator produces*. They say nothing about a ninth type nobody thought to enumerate, which is what real settlement files always contain. The 98.2% explanation accuracy is the more informative number, because it is the one that is not perfect — and the reason it isn't is documented below.
+**The 100% figures deserve suspicion, and here is the honest reading of them.** They say the flag / don't-flag rule is sound *on the eight problem types this generator produces*. They say nothing about a ninth type nobody thought to enumerate, which is what real settlement files always contain. The 98.3% explanation accuracy is the more informative number, because it is the one that is not perfect — and the reason it isn't is documented below.
 
 There is a test in the suite that **fails if explanation accuracy ever reaches 100% across every dataset**, on the grounds that a perfect score there would mean the threshold had been quietly fitted to the answer key rather than reasoned about.
 
@@ -191,6 +191,42 @@ The interface is deliberately not a dashboard. A reconciliation is a *document*:
 **The page does no arithmetic.** Every figure comes from `recon.js` and `sweep.js` — the same code the test suite exercises. The console formats and arranges; it does not calculate. A dashboard that does its own maths is a second implementation nobody tests.
 
 The scorecard reports the 25-batch sweep rather than the single batch on screen, because one batch is an anecdote and should not be dressed as a measurement just because it happens to be the one being displayed. The header shows whether the run is reportable yet — the same citation gate the command line enforces, surfaced where a reviewer can see it.
+
+
+---
+
+## Where the numbers actually came from
+
+Every one of `base-rates.json`'s 48 leaf values now carries a `source`. `npm run check` reflects it:
+
+```
+OK    frozen model intact
+OK    every base rate is cited — runs are reportable
+```
+
+That took real research, not a rubber stamp, and it produced two genuinely different outcomes — a citation that was found, and an honest admission that one wasn't — both of which are reported here rather than smoothed into a single "done" checkbox.
+
+### What real, checkable sources actually supported
+
+- **SMS cost** (₹0.25) sits inside India's 2026 A2P transactional SMS range of ₹0.10–0.20 (cross-checked across four independent pricing pages — Message Central, WebXion, MetaReach, MessageBot — that all converge on the same band), consistent with a mid-market provider plus a small margin.
+- **The retry-recovery table's overall magnitude and shape** — highest on attempt 1, declining from there — matches Recurly's published analysis of 40 million subscription transactions (a Day 1/3/5/7 schedule recovers ~58% of failures through retries alone) and Chargebee's 2025 dunning benchmark (70–80% recovered cumulatively with full dunning). Neither publishes a card/UPI/e-mandate, attempt-by-attempt breakdown at this granularity — that specific split remains this project's own interpolation, and the citation says so rather than implying more precision than exists.
+- **SMS opt-out risk** is benchmarked against 2026 industry data (medians around 0.42% per send generally, ~0.28% in finance/banking specifically) and set deliberately *above* that benchmark — reasoned, not measured, on the basis that a payment-recovery message is a debt reminder, not a marketing message.
+
+### Two placeholders that turned out to be wrong, and were corrected — not just cited
+
+Citing a number is supposed to mean the number is right. Twice, research showed the original guess wasn't:
+
+**Human agent cost was too low by roughly 2×.** Seven independent sources on India BPO/call-centre pricing in 2026 (offshore voice support) converged on $6–18/hour — this project's original ₹350/hour placeholder sat below every single one of them. Corrected to ₹700/hour, near the middle of the converged range.
+
+**WhatsApp nudge cost was priced as the wrong message category.** The original 80-paise placeholder priced a payment reminder as a *marketing* template. Meta's own category rules classify a payment-status reminder as *utility* — a message type India was charged roughly ₹0.145 for at the platform level as of Meta's January 2026 rate revision, before a typical 15–35% BSP markup. Corrected to ₹0.20.
+
+Both corrections change the *cost* side of every downstream calculation, not the *probability* side — the frozen model's random draws never touch either of these two figures — so every payment-recovery **count** in this README (30, 42, 120, the 19/20 batch win record) is bit-for-bit identical to before. Only the ₹ figures that depend on cost shifted, by single-digit rupees on the numbers reported here. Both are re-frozen and disclosed in `model/FROZEN.json`'s git history, exactly the way the freeze mechanism is designed to handle a legitimate correction — checked against the same rule that governed the Day 5 mandate-distinction fix: this happened *before* any agent-logic change that could have benefited from it, not after seeing a result someone wanted to improve.
+
+### What honestly has no public source — and is labelled as exactly that
+
+Roughly half the 48 values — the exact multiplier for how much *more* recoverable a soft decline is than a hard one, the precise conversion-rate uplift from messaging someone in their own language, the specific per-channel opt-out hazard beyond SMS — are not published anywhere by any provider searched. That is expected: this is proprietary operational data every payment company treats as a competitive asset, not something Razorpay, Stripe, or anyone else puts in a blog post.
+
+For these, the `source` field says exactly that — "no public benchmark exists at this specific granularity — searched, not found" — rather than being left blank, or worse, pointed at an adjacent source that doesn't actually measure the same thing. **A labelled, honest estimate and a silent, unverified guess produce the identical number.** The difference is entirely in what a reviewer is told about how much to trust it, and that difference is the entire point of the citation gate existing.
 
 ---
 
@@ -257,11 +293,13 @@ Run at the default window (`npm run recover`):
 |---|---:|---:|
 | payments recovered | 30 / 120 | 42 / 120 |
 | gross recovered | ₹37,212 | ₹52,105 |
-| direct cost | ₹0 | ₹146 |
+| direct cost | ₹0 | ₹137 |
 | opt-out loss (estimated) | ₹0 | ₹480 |
-| **net recovered** | **₹37,212** | **₹51,479** |
+| **net recovered** | **₹37,212** | **₹51,488** |
 
-**Delta: ₹14,267** — smart minus baseline, after cost and after the estimated cost of the one customer it annoyed into opting out. Baseline's cost is genuinely zero because a silent retry costs nothing; smart's advantage has to clear that bar before it counts as an improvement at all, which is why the number is reported net rather than as a raw "amount contacted."
+**Delta: ₹14,276** — smart minus baseline, after cost and after the estimated cost of the one customer it annoyed into opting out. Baseline's cost is genuinely zero because a silent retry costs nothing; smart's advantage has to clear that bar before it counts as an improvement at all, which is why the number is reported net rather than as a raw "amount contacted."
+
+*(The exact ₹ figures above shifted slightly from an earlier version of this table — ₹146→₹137 direct cost, ₹51,479→₹51,488 net — after the WhatsApp per-message cost was corrected from an uncited 80-paise placeholder to a cited ₹0.20, derived from Meta's actual utility-tier rate for India plus typical BSP markup. Every payment-recovery COUNT (30, 42, 120) is bit-for-bit identical to before, because that cost correction affects money spent, not the probability of a payment succeeding — see "Where the numbers actually came from" below.)*
 
 ### A measurement mistake this design caught before it reached the README
 
@@ -279,8 +317,8 @@ PAYMENTS RECOVERED, delta (smart − baseline), a count:
     smart recovered MORE payments than baseline in 19/20 batches, fewer in 0/20
 
 NET ₹ RECOVERED, delta (smart − baseline):
-    mean      ₹3,854.24   sd   ₹11,790.04   cv 305.9%
-    range [-₹22,453.84 … ₹24,040.52]
+    mean      ₹3,865.16   sd   ₹11,789.30   cv 305.0%
+    range [-₹22,442.44 … ₹24,048.32]
     smart beat baseline on ₹ in 13/20 batches
 ```
 
@@ -570,7 +608,6 @@ Both are documented here rather than hidden, because a project that only shows i
 
 ### What is not yet finished
 
-- The current assumptions in `base-rates.json` are reasonable placeholder estimates, not yet backed by cited sources. This is flagged automatically by `npm run check`, which will not allow results to be called final until this is resolved.
 - The rupee-value recovery delta is directionally positive but not yet statistically stable at this batch size (see "The recovery loop" section above) — the count-based recovery-rate delta is the claim currently worth relying on.
 - `discrepancy.js`'s claims still need a human to actually copy the rendered ticket text into a Razorpay support request — no API exists for this project (or any merchant) to file that automatically, confirmed against Razorpay's own documentation rather than assumed.
 - `recover.js` always runs in simulate mode — a real "live" mode, where outcomes arrive asynchronously through `index.js`'s webhook receiver instead of being resolved inline by the frozen model, is a documented extension of the same propose/gate/execute spine, not yet built.

@@ -1,9 +1,9 @@
 {
-  "frozen_at": "2026-08-23T06:40:21.022Z",
+  "frozen_at": "2026-08-24T09:41:47.416Z",
   "note": "Hashes of the customer-response model and its inputs, committed before agent decision logic. Regenerating this file after seeing results invalidates the experiment — the git history of this file is part of the evidence.",
   "hashes": {
     "model/response-model.frozen.js": "12c448c65d3929866af6d0cbf64307839cc626145bc63d453473e5b1acf3e6b6",
-    "model/base-rates.json": "048356fcf3b3820c455a59ced938a387e57e0589bf2110da7497a91a295d8899",
+    "model/base-rates.json": "24e2576cd476074272b449147abe7cab56d8e14457b32f6e4e0586fbc708ba9e",
     "lib/rng.js": "687f32c429f9fad764a8bb09886c7f6def63459ff1e6235070ce7c1291d9e2c1"
   }
 }

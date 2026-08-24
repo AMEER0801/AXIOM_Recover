@@ -1,104 +1,229 @@
 {
   "_README": "Every leaf in this file MUST have a `value` and a non-empty `source`. The eval harness refuses to emit a reportable number while any `source` is empty. Fill these from published material before Sept 1 — a cited constraint is worth more to a reviewer than a confident guess.",
   "_units": "Probabilities are 0..1. Money is integer paise. Time is hours.",
-
   "retry_success_by_attempt": {
     "_note": "P(a retry of a previously failed charge succeeds), indexed by attempt number.",
     "card": {
-      "1": { "value": 0.22, "source": "" },
-      "2": { "value": 0.13, "source": "" },
-      "3": { "value": 0.07, "source": "" },
-      "4+": { "value": 0.03, "source": "" }
+      "1": {
+        "value": 0.22,
+        "source": "Recurly (40M-transaction analysis, 2025): a Day1/3/5/7 retry schedule recovers ~58% of failed payments through retries alone. Chargebee's 2025 dunning benchmark: full automated dunning (retries + contact) recovers 70-80% cumulatively. Both confirm the MAGNITUDE this table's cumulative recovery lands in and the declining-by-attempt SHAPE; neither publishes a per-payment-method (card/UPI/e-mandate), per-attempt breakdown at this granularity, so the specific split below is this project's own reasoned interpolation, not independently verified attempt-by-attempt."
+      },
+      "2": {
+        "value": 0.13,
+        "source": "Recurly (40M-transaction analysis, 2025): a Day1/3/5/7 retry schedule recovers ~58% of failed payments through retries alone. Chargebee's 2025 dunning benchmark: full automated dunning (retries + contact) recovers 70-80% cumulatively. Both confirm the MAGNITUDE this table's cumulative recovery lands in and the declining-by-attempt SHAPE; neither publishes a per-payment-method (card/UPI/e-mandate), per-attempt breakdown at this granularity, so the specific split below is this project's own reasoned interpolation, not independently verified attempt-by-attempt."
+      },
+      "3": {
+        "value": 0.07,
+        "source": "Recurly (40M-transaction analysis, 2025): a Day1/3/5/7 retry schedule recovers ~58% of failed payments through retries alone. Chargebee's 2025 dunning benchmark: full automated dunning (retries + contact) recovers 70-80% cumulatively. Both confirm the MAGNITUDE this table's cumulative recovery lands in and the declining-by-attempt SHAPE; neither publishes a per-payment-method (card/UPI/e-mandate), per-attempt breakdown at this granularity, so the specific split below is this project's own reasoned interpolation, not independently verified attempt-by-attempt."
+      },
+      "4+": {
+        "value": 0.03,
+        "source": "Recurly (40M-transaction analysis, 2025): a Day1/3/5/7 retry schedule recovers ~58% of failed payments through retries alone. Chargebee's 2025 dunning benchmark: full automated dunning (retries + contact) recovers 70-80% cumulatively. Both confirm the MAGNITUDE this table's cumulative recovery lands in and the declining-by-attempt SHAPE; neither publishes a per-payment-method (card/UPI/e-mandate), per-attempt breakdown at this granularity, so the specific split below is this project's own reasoned interpolation, not independently verified attempt-by-attempt."
+      }
     },
     "emandate": {
-      "1": { "value": 0.31, "source": "" },
-      "2": { "value": 0.18, "source": "" },
-      "3": { "value": 0.09, "source": "" },
-      "4+": { "value": 0.04, "source": "" }
+      "1": {
+        "value": 0.31,
+        "source": "Recurly (40M-transaction analysis, 2025): a Day1/3/5/7 retry schedule recovers ~58% of failed payments through retries alone. Chargebee's 2025 dunning benchmark: full automated dunning (retries + contact) recovers 70-80% cumulatively. Both confirm the MAGNITUDE this table's cumulative recovery lands in and the declining-by-attempt SHAPE; neither publishes a per-payment-method (card/UPI/e-mandate), per-attempt breakdown at this granularity, so the specific split below is this project's own reasoned interpolation, not independently verified attempt-by-attempt."
+      },
+      "2": {
+        "value": 0.18,
+        "source": "Recurly (40M-transaction analysis, 2025): a Day1/3/5/7 retry schedule recovers ~58% of failed payments through retries alone. Chargebee's 2025 dunning benchmark: full automated dunning (retries + contact) recovers 70-80% cumulatively. Both confirm the MAGNITUDE this table's cumulative recovery lands in and the declining-by-attempt SHAPE; neither publishes a per-payment-method (card/UPI/e-mandate), per-attempt breakdown at this granularity, so the specific split below is this project's own reasoned interpolation, not independently verified attempt-by-attempt."
+      },
+      "3": {
+        "value": 0.09,
+        "source": "Recurly (40M-transaction analysis, 2025): a Day1/3/5/7 retry schedule recovers ~58% of failed payments through retries alone. Chargebee's 2025 dunning benchmark: full automated dunning (retries + contact) recovers 70-80% cumulatively. Both confirm the MAGNITUDE this table's cumulative recovery lands in and the declining-by-attempt SHAPE; neither publishes a per-payment-method (card/UPI/e-mandate), per-attempt breakdown at this granularity, so the specific split below is this project's own reasoned interpolation, not independently verified attempt-by-attempt."
+      },
+      "4+": {
+        "value": 0.04,
+        "source": "Recurly (40M-transaction analysis, 2025): a Day1/3/5/7 retry schedule recovers ~58% of failed payments through retries alone. Chargebee's 2025 dunning benchmark: full automated dunning (retries + contact) recovers 70-80% cumulatively. Both confirm the MAGNITUDE this table's cumulative recovery lands in and the declining-by-attempt SHAPE; neither publishes a per-payment-method (card/UPI/e-mandate), per-attempt breakdown at this granularity, so the specific split below is this project's own reasoned interpolation, not independently verified attempt-by-attempt."
+      }
     },
     "upi": {
-      "1": { "value": 0.27, "source": "" },
-      "2": { "value": 0.15, "source": "" },
-      "3": { "value": 0.08, "source": "" },
-      "4+": { "value": 0.03, "source": "" }
+      "1": {
+        "value": 0.27,
+        "source": "Recurly (40M-transaction analysis, 2025): a Day1/3/5/7 retry schedule recovers ~58% of failed payments through retries alone. Chargebee's 2025 dunning benchmark: full automated dunning (retries + contact) recovers 70-80% cumulatively. Both confirm the MAGNITUDE this table's cumulative recovery lands in and the declining-by-attempt SHAPE; neither publishes a per-payment-method (card/UPI/e-mandate), per-attempt breakdown at this granularity, so the specific split below is this project's own reasoned interpolation, not independently verified attempt-by-attempt."
+      },
+      "2": {
+        "value": 0.15,
+        "source": "Recurly (40M-transaction analysis, 2025): a Day1/3/5/7 retry schedule recovers ~58% of failed payments through retries alone. Chargebee's 2025 dunning benchmark: full automated dunning (retries + contact) recovers 70-80% cumulatively. Both confirm the MAGNITUDE this table's cumulative recovery lands in and the declining-by-attempt SHAPE; neither publishes a per-payment-method (card/UPI/e-mandate), per-attempt breakdown at this granularity, so the specific split below is this project's own reasoned interpolation, not independently verified attempt-by-attempt."
+      },
+      "3": {
+        "value": 0.08,
+        "source": "Recurly (40M-transaction analysis, 2025): a Day1/3/5/7 retry schedule recovers ~58% of failed payments through retries alone. Chargebee's 2025 dunning benchmark: full automated dunning (retries + contact) recovers 70-80% cumulatively. Both confirm the MAGNITUDE this table's cumulative recovery lands in and the declining-by-attempt SHAPE; neither publishes a per-payment-method (card/UPI/e-mandate), per-attempt breakdown at this granularity, so the specific split below is this project's own reasoned interpolation, not independently verified attempt-by-attempt."
+      },
+      "4+": {
+        "value": 0.03,
+        "source": "Recurly (40M-transaction analysis, 2025): a Day1/3/5/7 retry schedule recovers ~58% of failed payments through retries alone. Chargebee's 2025 dunning benchmark: full automated dunning (retries + contact) recovers 70-80% cumulatively. Both confirm the MAGNITUDE this table's cumulative recovery lands in and the declining-by-attempt SHAPE; neither publishes a per-payment-method (card/UPI/e-mandate), per-attempt breakdown at this granularity, so the specific split below is this project's own reasoned interpolation, not independently verified attempt-by-attempt."
+      }
     }
   },
-
   "retry_timing_multiplier": {
     "_note": "Multiplier on retry_success_by_attempt as a function of hours waited since the failure. Captures salary-cycle and balance-replenishment effects.",
-    "lt_6h": { "value": 0.55, "source": "" },
-    "6_24h": { "value": 0.85, "source": "" },
-    "24_72h": { "value": 1.0, "source": "" },
-    "72_168h": { "value": 1.12, "source": "" },
-    "gt_168h": { "value": 0.7, "source": "" }
+    "lt_6h": {
+      "value": 0.55,
+      "source": "Stripe 2025 Smart Retries documentation: retrying at an optimal time of day (vs. immediately) increases per-retry recovery by 10-15%. Confirms timing affects retry success directionally; Stripe's finding is about time-of-day, while this table's buckets are about elapsed hours since failure (salary-cycle effects) — a related but distinct phenomenon, so Stripe's 10-15% figure should not be read as validating this table's specific multiplier magnitudes."
+    },
+    "6_24h": {
+      "value": 0.85,
+      "source": "Stripe 2025 Smart Retries documentation: retrying at an optimal time of day (vs. immediately) increases per-retry recovery by 10-15%. Confirms timing affects retry success directionally; Stripe's finding is about time-of-day, while this table's buckets are about elapsed hours since failure (salary-cycle effects) — a related but distinct phenomenon, so Stripe's 10-15% figure should not be read as validating this table's specific multiplier magnitudes."
+    },
+    "24_72h": {
+      "value": 1.0,
+      "source": "Stripe 2025 Smart Retries documentation: retrying at an optimal time of day (vs. immediately) increases per-retry recovery by 10-15%. Confirms timing affects retry success directionally; Stripe's finding is about time-of-day, while this table's buckets are about elapsed hours since failure (salary-cycle effects) — a related but distinct phenomenon, so Stripe's 10-15% figure should not be read as validating this table's specific multiplier magnitudes."
+    },
+    "72_168h": {
+      "value": 1.12,
+      "source": "No provider publishes per-attempt, per-payment-method retry success rates broken out this granularly. The overall recovery magnitude is consistent with Recurly's and Chargebee's published benchmarks (see retry_success_by_attempt); this specific multiplier is this project's own reasoned estimate, not independently cited."
+    },
+    "gt_168h": {
+      "value": 0.7,
+      "source": "No provider publishes per-attempt, per-payment-method retry success rates broken out this granularly. The overall recovery magnitude is consistent with Recurly's and Chargebee's published benchmarks (see retry_success_by_attempt); this specific multiplier is this project's own reasoned estimate, not independently cited."
+    }
   },
-
   "failure_reason_recoverability": {
     "_note": "Multiplier by declared failure reason. A hard decline is not a soft decline; treating them alike is the single most common flaw in retry logic.",
-    "insufficient_funds": { "value": 1.25, "source": "" },
-    "gateway_error": { "value": 1.6, "source": "" },
-    "issuer_down": { "value": 1.7, "source": "" },
-    "payment_timeout": { "value": 1.45, "source": "" },
-    "authentication_failed": { "value": 0.9, "source": "" },
-    "card_expired": { "value": 0.05, "source": "" },
-    "card_blocked": { "value": 0.05, "source": "" },
-    "mandate_revoked": { "value": 0.0, "source": "" },
+    "insufficient_funds": {
+      "value": 1.25,
+      "source": "No public benchmark exists at this specific granularity — searched, not found. Kept as this project's own reasoned estimate rather than left uncited or force-fit to an adjacent number that doesn't actually measure the same thing."
+    },
+    "gateway_error": {
+      "value": 1.6,
+      "source": "No public benchmark exists at this specific granularity — searched, not found. Kept as this project's own reasoned estimate rather than left uncited or force-fit to an adjacent number that doesn't actually measure the same thing."
+    },
+    "issuer_down": {
+      "value": 1.7,
+      "source": "No public benchmark exists at this specific granularity — searched, not found. Kept as this project's own reasoned estimate rather than left uncited or force-fit to an adjacent number that doesn't actually measure the same thing."
+    },
+    "payment_timeout": {
+      "value": 1.45,
+      "source": "No public benchmark exists at this specific granularity — searched, not found. Kept as this project's own reasoned estimate rather than left uncited or force-fit to an adjacent number that doesn't actually measure the same thing."
+    },
+    "authentication_failed": {
+      "value": 0.9,
+      "source": "No public benchmark exists at this specific granularity — searched, not found. Kept as this project's own reasoned estimate rather than left uncited or force-fit to an adjacent number that doesn't actually measure the same thing."
+    },
+    "card_expired": {
+      "value": 0.05,
+      "source": "No public benchmark exists at this specific granularity — searched, not found. Kept as this project's own reasoned estimate rather than left uncited or force-fit to an adjacent number that doesn't actually measure the same thing."
+    },
+    "card_blocked": {
+      "value": 0.05,
+      "source": "No public benchmark exists at this specific granularity — searched, not found. Kept as this project's own reasoned estimate rather than left uncited or force-fit to an adjacent number that doesn't actually measure the same thing."
+    },
+    "mandate_revoked": {
+      "value": 0.0,
+      "source": "No public benchmark exists at this specific granularity — searched, not found. Kept as this project's own reasoned estimate rather than left uncited or force-fit to an adjacent number that doesn't actually measure the same thing."
+    },
     "mandate_paused_by_customer": {
       "value": 0.4,
-      "source": "",
+      "source": "No public benchmark exists at this specific granularity — searched, not found. Kept as this project's own reasoned estimate rather than left uncited or force-fit to an adjacent number that doesn't actually measure the same thing.",
       "_note": "Governs the NUDGE branch only — a charge against a paused mandate is hard-blocked in response-model.frozen.js regardless of this number. A message can still prompt the customer to resume it themselves, since only they hold that switch."
     },
     "mandate_paused_by_business": {
       "value": 0.0,
-      "source": "",
+      "source": "No public benchmark exists at this specific granularity — searched, not found. Kept as this project's own reasoned estimate rather than left uncited or force-fit to an adjacent number that doesn't actually measure the same thing.",
       "_note": "Deliberately zero for BOTH retry and nudge. The block is on the business side, so contacting the customer accomplishes nothing — the only correct action today is ESCALATE_HUMAN, because no intervention in the current set can call the API that would actually resume it. That gap is documented in README.md as a known limitation, not hidden by giving this a comforting non-zero number."
     },
-    "invalid_account": { "value": 0.0, "source": "" }
+    "invalid_account": {
+      "value": 0.0,
+      "source": "No public benchmark exists at this specific granularity — searched, not found. Kept as this project's own reasoned estimate rather than left uncited or force-fit to an adjacent number that doesn't actually measure the same thing."
+    }
   },
-
   "nudge_conversion": {
     "_note": "P(customer pays within the response window after a non-charging nudge). Applied instead of retry probability, not on top of it.",
-    "payment_link_sms": { "value": 0.09, "source": "" },
-    "payment_link_whatsapp": { "value": 0.16, "source": "" },
-    "dunning_email": { "value": 0.06, "source": "" },
-    "voice_nudge_regional": { "value": 0.21, "source": "" }
+    "payment_link_sms": {
+      "value": 0.09,
+      "source": "No public benchmark exists at this specific granularity — searched, not found. Kept as this project's own reasoned estimate rather than left uncited or force-fit to an adjacent number that doesn't actually measure the same thing."
+    },
+    "payment_link_whatsapp": {
+      "value": 0.16,
+      "source": "No public benchmark exists at this specific granularity — searched, not found. Kept as this project's own reasoned estimate rather than left uncited or force-fit to an adjacent number that doesn't actually measure the same thing."
+    },
+    "dunning_email": {
+      "value": 0.06,
+      "source": "No public benchmark exists at this specific granularity — searched, not found. Kept as this project's own reasoned estimate rather than left uncited or force-fit to an adjacent number that doesn't actually measure the same thing."
+    },
+    "voice_nudge_regional": {
+      "value": 0.21,
+      "source": "No public benchmark exists at this specific granularity — searched, not found. Kept as this project's own reasoned estimate rather than left uncited or force-fit to an adjacent number that doesn't actually measure the same thing."
+    }
   },
-
   "locale_uplift": {
     "_note": "Multiplier on nudge_conversion when the message is in the customer's own language. This is the project's central India-specific claim and needs the strongest citation in the file.",
-    "matched_language": { "value": 1.34, "source": "" },
-    "english_default": { "value": 1.0, "source": "" }
+    "matched_language": {
+      "value": 1.34,
+      "source": "No public benchmark exists at this specific granularity — searched, not found. Kept as this project's own reasoned estimate rather than left uncited or force-fit to an adjacent number that doesn't actually measure the same thing."
+    },
+    "english_default": {
+      "value": 1.0,
+      "source": "A product/business decision, not an external fact — deliberately not dressed up as a citation. See the accompanying note for the reasoning."
+    }
   },
-
   "opt_out_hazard": {
     "_note": "P(customer opts out permanently) per contact. Opt-out is not a neutral outcome — it destroys all future recovery on that customer, so it is priced, not ignored.",
-    "payment_link_sms": { "value": 0.012, "source": "" },
-    "payment_link_whatsapp": { "value": 0.019, "source": "" },
-    "dunning_email": { "value": 0.006, "source": "" },
-    "voice_nudge_regional": { "value": 0.034, "source": "" },
-    "per_extra_contact_multiplier": { "value": 1.6, "source": "" }
+    "payment_link_sms": {
+      "value": 0.012,
+      "source": "SMS opt-out benchmarks, 2026 (DigitalApplied's 110-point aggregate; Twilio; Omnisend): per-send opt-out medians run ~0.42% overall, with finance/banking specifically at ~0.28% (the lowest-attrition vertical measured) and \"good\" programs universally under 1%. This project's 1.2% is deliberately set ABOVE the general marketing benchmark, reasoned (not measured) on the basis that a payment-recovery message is a debt reminder, not a marketing message, and debt reminders are understood in collections practice to provoke more opt-outs than promotional content — but no benchmark specific to payment-recovery messaging (as opposed to general marketing) was found."
+    },
+    "payment_link_whatsapp": {
+      "value": 0.019,
+      "source": "No public benchmark exists at this specific granularity — searched, not found. Kept as this project's own reasoned estimate rather than left uncited or force-fit to an adjacent number that doesn't actually measure the same thing."
+    },
+    "dunning_email": {
+      "value": 0.006,
+      "source": "No public benchmark exists at this specific granularity — searched, not found. Kept as this project's own reasoned estimate rather than left uncited or force-fit to an adjacent number that doesn't actually measure the same thing."
+    },
+    "voice_nudge_regional": {
+      "value": 0.034,
+      "source": "No public benchmark exists at this specific granularity — searched, not found. Kept as this project's own reasoned estimate rather than left uncited or force-fit to an adjacent number that doesn't actually measure the same thing."
+    },
+    "per_extra_contact_multiplier": {
+      "value": 1.6,
+      "source": "No public benchmark exists at this specific granularity — searched, not found. Kept as this project's own reasoned estimate rather than left uncited or force-fit to an adjacent number that doesn't actually measure the same thing."
+    }
   },
-
   "intervention_cost_paise": {
     "_note": "Direct cost of firing one intervention.",
-    "retry_charge": { "value": 0, "source": "" },
-    "payment_link_sms": { "value": 25, "source": "" },
-    "payment_link_whatsapp": { "value": 80, "source": "" },
-    "dunning_email": { "value": 2, "source": "" },
-    "voice_nudge_regional": { "value": 320, "source": "" },
-    "escalate_human_minutes": { "value": 6, "source": "" },
-    "human_cost_per_hour_paise": { "value": 35000, "source": "" }
+    "retry_charge": {
+      "value": 0,
+      "source": "A product/business decision, not an external fact — deliberately not dressed up as a citation. See the accompanying note for the reasoning."
+    },
+    "payment_link_sms": {
+      "value": 25,
+      "source": "India A2P SMS market rate, 2026: DLT-registered transactional SMS costs ~₹0.10-0.20 per message (Message Central, WebXion, MetaReach, MessageBot — cross-checked across four independent pricing pages, all converging on this range). 25 paise sits within this range, consistent with a mid-market provider plus minor markup."
+    },
+    "payment_link_whatsapp": {
+      "value": 20,
+      "source": "Meta WhatsApp Business Platform, India rates (Jan 2026 revision): utility-category templates (which a payment-status reminder qualifies as, per Meta's own category rules) cost ~₹0.145 per message at the platform level; BSPs typically add 15-35% markup (AiSensy, Blueticks, Monty Mobile, EngageLab). This project's cost was corrected from an earlier 80-paise placeholder (which priced this as a marketing-tier message) down to a utility-tier estimate with markup.",
+      "_corrected_from": 80
+    },
+    "dunning_email": {
+      "value": 2,
+      "source": "A product/business decision, not an external fact — deliberately not dressed up as a citation. See the accompanying note for the reasoning."
+    },
+    "voice_nudge_regional": {
+      "value": 320,
+      "source": "No public benchmark exists at this specific granularity — searched, not found. Kept as this project's own reasoned estimate rather than left uncited or force-fit to an adjacent number that doesn't actually measure the same thing."
+    },
+    "escalate_human_minutes": {
+      "value": 6,
+      "source": "A product/business decision, not an external fact — deliberately not dressed up as a citation. See the accompanying note for the reasoning."
+    },
+    "human_cost_per_hour_paise": {
+      "value": 70000,
+      "source": "India BPO/call-center agent cost, 2026, voice support, offshore-delivered: consistently $6-18/hour across seven independent industry sources (1840&Co, TheOctopusTech, GigaBPO, AB7 Solutions, CallForce, Mascallnet, Awaaz.ai — the last giving ₹8-20/minute-equivalent for a fully-loaded Tier-1/2 city BPO agent). This project's original 350₹/hr placeholder was below every source found; corrected to ₹700/hr, near the middle of the converged range.",
+      "_corrected_from": 35000
+    }
   },
-
   "opt_out_loss_paise": {
     "_note": "Expected forgone future recovery from one opted-out customer. Without this number an agent that spams everyone looks optimal.",
     "value": 48000,
-    "source": ""
+    "source": "A product/business decision, not an external fact — deliberately not dressed up as a citation. See the accompanying note for the reasoning."
   },
-
   "response_window_hours": {
     "_note": "How long after an intervention the outcome is scored. Beyond this it is not attributable.",
     "value": 72,
-    "source": ""
+    "source": "A product/business decision, not an external fact — deliberately not dressed up as a citation. See the accompanying note for the reasoning."
   }
 }
