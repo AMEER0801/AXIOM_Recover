@@ -397,11 +397,25 @@ if (require.main === module) {
 
   const dataDir = path.resolve(arg("data", "./data"));
   const ledger = JSON.parse(fs.readFileSync(path.join(dataDir, "ledger.json"), "utf8"));
-  const truth = JSON.parse(fs.readFileSync(path.join(dataDir, "truth.json"), "utf8"));
+
+  /* truth.json is the synthetic seeder's written-in-advance answer
+     key. Real, live-captured data (from index.js's webhook
+     receiver, exported via export-live-ledger.js) has no such
+     thing — nobody knows the "true" classification of a genuine
+     external event before the fact, so there is nothing to score
+     against. That is expected, not a missing file to fix: this
+     mode reports what the reconciler found, with no scorecard,
+     rather than crashing or fabricating a comparison that isn't
+     possible. Found necessary by a real user hitting this file's
+     hard requirement on a directory that never had a truth.json in
+     the first place — the earlier version of this script had no
+     other option than to throw ENOENT. */
+  const truthPath = path.join(dataDir, "truth.json");
+  const truth = fs.existsSync(truthPath) ? JSON.parse(fs.readFileSync(truthPath, "utf8")) : null;
 
   const band = Number(arg("fee-band", FEE_VARIANCE_BAND));
   const out = reconcile(ledger, { feeBand: band });
-  const s = score(out, truth);
+  const s = truth ? score(out, truth) : null;
   const st = out.stats;
 
   const pct = (x) => (x * 100).toFixed(1) + "%";
@@ -422,6 +436,13 @@ if (require.main === module) {
   console.log(`  high severity ........ ${st.by_severity.high}   (duplicates, missing settlements, unexplained gaps)`);
   console.log(`  low severity ......... ${st.by_severity.low}   (explained, but still money not received)`);
 
+  if (!truth) {
+    console.log(`\n── NO ANSWER KEY ───────────────────────────────────────`);
+    console.log(`  No truth.json in ${dataDir} — this looks like real, live-captured data, not a`);
+    console.log(`  synthetic batch. The reconciliation above is real; there is no scorecard to show`);
+    console.log(`  because nobody wrote down the "true" answer for a genuine external event in`);
+    console.log(`  advance. Run against ./data (the synthetic seeder's output) to see scoring.`);
+  } else {
   console.log(`\n── SCORED AGAINST THE ANSWER KEY ──────────────────────`);
   console.log(`  precision ............ ${pct(s.precision)}   (of what we flagged, how much was real)`);
   console.log(`  recall ............... ${pct(s.recall)}   (of what was real, how much we caught)`);
@@ -448,6 +469,7 @@ if (require.main === module) {
     s.misexplained.slice(0, 10).forEach((x) => console.log(`    · ${x.payment_id}  truth=${x.truth_break}  we called it ${x.our_tier}`));
     console.log(`\n  These are the cases the flag/no-flag score cannot see. The verdict`);
     console.log(`  was right; the story an operator would read was not.`);
+  }
   }
 
   const exDir = path.join(dataDir, "recon");

@@ -30,8 +30,27 @@ const { evaluateGates, GATE_NAMES, createAttemptLedger, createSpendTracker, crea
 const { baselinePolicy, smartPolicy, runBatch, compareArms, AT_RISK_KINDS } = require("../recover");
 const { createAuditChain, verifyChain, toCSV, gateCoverage, canonical, GENESIS_PREV } = require("../audit");
 const { llmPolicy, callModel, buildUserPrompt, parseAction, VALID_ACTIONS, estimateUsdCost } = require("../llm-policy");
+
+/* Every unit test that needs a RazorpayClient gets its OWN
+   idempotency store file, never the real data/idempotency-store.json.
+   This exists because of a real bug: without it, these tests shared
+   state with each other across runs, AND with whatever a person had
+   left behind from real manual testing in the actual data/ folder —
+   a stale entry there made "dry-run never sets live mode" see a
+   replayed call instead of a fresh one, and made the very next test
+   assert a call count of 1 against a 0 that had already been
+   consumed by the leftover file. Found by the full suite failing
+   right after real manual API testing had populated that file,
+   the exact kind of test-isolation bug this project has already
+   caught twice elsewhere (the async harness, .gitignore). */
+function freshRzpClient(overrides = {}) {
+  const storePath = path.join(require("os").tmpdir(), `axiom-test-idem-${Date.now()}-${Math.random().toString(36).slice(2)}.json`);
+  return new RazorpayClient({ keyId: "rzp_test_a", keySecret: "b", idempotencyStorePath: storePath, ...overrides });
+}
 const { detectRateDiscrepancies, buildPatternClaims, buildIndividualClaims, renderClaimText, score: discScore, claimId, CLAIM_POLICY } = require("../discrepancy");
 const { CONTRACTED_MDR_BPS, STANDARD_MDR_BPS } = require("../seed");
+const { exportLiveLedger } = require("../export-live-ledger");
+const { execSync } = require("child_process");
 
 async function main() {
   let pass = 0, fail = 0;
@@ -163,20 +182,20 @@ async function main() {
   });
 
   await t("a write without an idempotency key is refused", async () => {
-    const c = new RazorpayClient({ keyId: "rzp_test_a", keySecret: "b" });
+    const c = freshRzpClient();
     return c.request({ method: "POST", path: "/payment_links", body: {} })
       .then(() => { throw new Error("should have thrown"); }, (e) => assert.match(e.message, /idempotency/));
   });
 
   await t("dry-run never sets live mode and marks its output simulated", async () => {
-    const c = new RazorpayClient({ keyId: "rzp_test_a", keySecret: "b" });
+    const c = freshRzpClient();
     assert.strictEqual(c.live, false);
     return c.createPaymentLink({ amountPaise: 10000, description: "x", entityId: "pay_1", attemptNo: 1 })
       .then((r) => { assert.strictEqual(r.simulated, true); assert.strictEqual(c.calls[0].mode, "dry-run"); });
   });
 
   await t("a replayed idempotency key does not issue a second call", async () => {
-    const c = new RazorpayClient({ keyId: "rzp_test_a", keySecret: "b" });
+    const c = freshRzpClient();
     const args = { amountPaise: 10000, description: "x", entityId: "pay_9", attemptNo: 1 };
     return c.createPaymentLink(args)
       .then(() => c.createPaymentLink(args))
@@ -1291,6 +1310,80 @@ await t("Razorpay's real Disputes API only accepts or contests an existing dispu
   const draftedPossible = ["drafted", "monitor"];
   const items = Array.from({ length: 4 }, (_, i) => ({ payment_id: `p${i}`, merchant_id: "kovai_textiles", overcharge_paise: 6000, implied_bps: 200, contracted_bps: 190, ts: "2026-01-01T00:00:00.000Z" }));
   for (const c of buildPatternClaims(items)) assert.ok(draftedPossible.includes(c.status));
+});
+
+
+console.log("\nexport-live-ledger — bridging real webhook data to the offline tools");
+
+await t("exports NDJSON lines into a clean JSON array", () => {
+  const dir = fs.mkdtempSync(path.join(require("os").tmpdir(), "axiom-export-"));
+  fs.writeFileSync(path.join(dir, "ingested.jsonl"), '{"a":1}\n{"a":2}\n');
+  const r = exportLiveLedger({ dataDir: dir });
+  assert.strictEqual(r.ok, true);
+  assert.strictEqual(r.count, 2);
+  const written = JSON.parse(fs.readFileSync(path.join(dir, "ledger.json"), "utf8"));
+  assert.deepStrictEqual(written, [{ a: 1 }, { a: 2 }]);
+});
+
+await t("reports failure cleanly when nothing has been ingested yet, rather than throwing", () => {
+  const dir = fs.mkdtempSync(path.join(require("os").tmpdir(), "axiom-export-empty-"));
+  const r = exportLiveLedger({ dataDir: dir });
+  assert.strictEqual(r.ok, false);
+});
+
+await t("recon.js runs on real data with no truth.json, without crashing, and says so — the exact bug a real user hit", () => {
+  const dir = fs.mkdtempSync(path.join(require("os").tmpdir(), "axiom-live-recon-"));
+  const realWebhookRecords = [
+    { event_id: "evt_1", ts: "2026-08-24T17:41:44.000Z", kind: "payment_failed", merchant_id: "unknown", entity: { type: "payment", id: "pay_1" }, customer: { id: "c1", contact_hash: "ch_1", locale: "ta", dnc: false }, amount_paise: 50000, currency: "INR", method: "card", failure: { source: "gateway", step: "payment_authorization", code: "BAD_REQUEST_ERROR", reason: "insufficient_funds" }, attempt_no: 0, raw: {} },
+  ];
+  fs.writeFileSync(path.join(dir, "ledger.json"), JSON.stringify(realWebhookRecords));
+  const out = execSync(`node ${path.join(__dirname, "..", "recon.js")} --data ${dir}`, { encoding: "utf8" });
+  assert.ok(out.includes("NO ANSWER KEY"), "should explicitly say there is no truth.json, not crash or fabricate a score");
+  assert.ok(!out.includes("ENOENT"), "must not throw the original ENOENT-on-truth.json error");
+});
+
+await t("discrepancy.js runs on real data with no truth.json, without crashing, and says so", () => {
+  const dir = fs.mkdtempSync(path.join(require("os").tmpdir(), "axiom-live-disc-"));
+  fs.writeFileSync(path.join(dir, "ledger.json"), JSON.stringify([]));
+  const out = execSync(`node ${path.join(__dirname, "..", "discrepancy.js")} --data ${dir}`, { encoding: "utf8" });
+  assert.ok(out.includes("NO ANSWER KEY"));
+  assert.ok(!out.includes("ENOENT"));
+});
+
+await t("recon.js still scores normally when truth.json IS present — the optional-truth fix doesn't disable scoring on synthetic batches", () => {
+  const { ledger, truth } = generate({ seed: 321, records: 100 });
+  const dir = fs.mkdtempSync(path.join(require("os").tmpdir(), "axiom-live-recon-scored-"));
+  fs.writeFileSync(path.join(dir, "ledger.json"), JSON.stringify(ledger));
+  fs.writeFileSync(path.join(dir, "truth.json"), JSON.stringify(truth));
+  const out = execSync(`node ${path.join(__dirname, "..", "recon.js")} --data ${dir}`, { encoding: "utf8" });
+  assert.ok(out.includes("SCORED AGAINST THE ANSWER KEY"));
+  assert.ok(!out.includes("NO ANSWER KEY"));
+});
+
+
+console.log("\ntest isolation itself");
+
+await t("RazorpayClient unit tests never touch the real data/idempotency-store.json, even if it already has entries from real manual testing", () => {
+  /* This is a test OF the test suite's own hygiene, in the same
+     spirit as the async-harness self-check. It exists because the
+     bug it guards against actually happened: after real manual
+     testing left entries in data/idempotency-store.json, the next
+     `npm test` run failed two unrelated tests, because they shared
+     that file instead of getting their own. Simulates exactly that
+     — a real leftover entry present — and confirms a fresh client
+     from the test helper is unaffected. */
+  const realStorePath = path.join(__dirname, "..", "data", "idempotency-store.json");
+  const hadRealFile = fs.existsSync(realStorePath);
+  const originalContent = hadRealFile ? fs.readFileSync(realStorePath, "utf8") : null;
+  try {
+    fs.mkdirSync(path.dirname(realStorePath), { recursive: true });
+    fs.writeFileSync(realStorePath, JSON.stringify({ idem_shouldnotmatter: { ok: true, simulated: true, entity: { id: "plink_should_not_appear" } } }));
+    const c = freshRzpClient();
+    assert.strictEqual(c._idem.size, 0, "a freshly constructed test client must not have loaded entries from the real project's data/ folder");
+  } finally {
+    if (hadRealFile) fs.writeFileSync(realStorePath, originalContent);
+    else fs.rmSync(realStorePath, { force: true });
+  }
 });
 
 console.log(`\n${pass} passed, ${fail} failed\n`);

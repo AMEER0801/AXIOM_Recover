@@ -245,13 +245,18 @@ if (require.main === module) {
   const dataDir = path.resolve(arg("data", "./data"));
 
   const ledger = JSON.parse(fs.readFileSync(path.join(dataDir, "ledger.json"), "utf8"));
-  const truth = JSON.parse(fs.readFileSync(path.join(dataDir, "truth.json"), "utf8"));
+  /* Optional, same reasoning as recon.js: real, live-captured data
+     has no written-in-advance answer key. Detection itself needs
+     nothing from truth.json — CONTRACTED_MDR_BPS is a fixed table,
+     not derived from it — only the scorecard does. */
+  const truthPath = path.join(dataDir, "truth.json");
+  const truth = fs.existsSync(truthPath) ? JSON.parse(fs.readFileSync(truthPath, "utf8")) : null;
 
   const findings = detectRateDiscrepancies(ledger);
   const patternClaims = buildPatternClaims(findings);
   const individualClaims = buildIndividualClaims(findings, patternClaims);
   const allClaims = [...patternClaims, ...individualClaims];
-  const sc = score(findings, truth);
+  const sc = truth ? score(findings, truth) : null;
 
   const pct = (x) => (x * 100).toFixed(1) + "%";
 
@@ -261,10 +266,18 @@ if (require.main === module) {
   console.log(`  overcharges (claimable). ${findings.filter((f) => f.overcharge_paise > 0).length}`);
   console.log(`  undercharges (audit only) ${findings.filter((f) => f.overcharge_paise < 0).length}`);
 
+  if (!truth) {
+    console.log(`\n\u2500\u2500 NO ANSWER KEY \u2500\u2500`);
+    console.log(`  No truth.json in ${dataDir} — real, live-captured data has no such thing. Detection`);
+    console.log(`  above is real; note that real merchant IDs won't match this project's synthetic`);
+    console.log(`  CONTRACTED_MDR_BPS table (acme_retail, kovai_textiles, ...) and will be correctly`);
+    console.log(`  skipped rather than guessed at, so 0 findings on real data is expected here.`);
+  } else {
   console.log(`\n\u2500\u2500 SCORED AGAINST THE ANSWER KEY \u2500\u2500`);
   console.log(`  precision .............. ${pct(sc.precision)}`);
   console.log(`  recall ................. ${pct(sc.recall)}`);
   console.log(`  confusion .............. TP ${sc.confusion.tp}  FP ${sc.confusion.fp}  FN ${sc.confusion.fn}  TN ${sc.confusion.tn}`);
+  }
 
   console.log(`\n\u2500\u2500 CLAIMS \u2500\u2500`);
   if (!allClaims.length) {

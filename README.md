@@ -46,7 +46,7 @@ This is an active build. Here is exactly what is finished and what is not, so th
 | Customer-response model | Simulates how a test customer would respond to each action, locked before agent logic exists | Done, locked |
 | Payment security layer | Verifies that incoming payment notifications are genuinely from Razorpay and not forged | Done, tested |
 | Razorpay connection | Sends requests to Razorpay's test system safely, with no risk of double-charging | Done, tested |
-| Automated tests | 140 checks that confirm the above claims are actually true | All passing |
+| Automated tests | 146 checks that confirm the above claims are actually true | All passing |
 | Reconciliation engine | Matches payments to settlements, explains gaps, triages what's left | Done, tested |
 | Gate layer (money firewall) | Every bounded/gated guarantee, enforced and unit-tested independently | Done, tested |
 | Recovery loop | Proposes an action, gates it, executes (dry-run), simulates the outcome, hands it to the reconciler | Done, tested |
@@ -219,7 +219,29 @@ Call 1 (fresh process): plink_a3ef270cc1c72b, replayed: false
 Call 2 (fresh process, same entity+attempt): plink_a3ef270cc1c72b, replayed: true
 ```
 
-This is also the strongest available evidence for why the manual-testing guide (see `AXIOM-RECOVER-vscode-testing-guide.md`) is not an optional afterthought to the automated suite — it is a different, complementary way of being wrong that 140 unit tests, however thorough, structurally cannot reach on their own.
+This is also the strongest available evidence for why the manual-testing guide (see `AXIOM-RECOVER-vscode-testing-guide.md`) is not an optional afterthought to the automated suite — it is a different, complementary way of being wrong that 146 unit tests, however thorough, structurally cannot reach on their own.
+
+Re-verifying that fix (a Windows machine, a real ngrok tunnel, a genuine Razorpay webhook this time) surfaced two more real gaps in the same session — and then, fixing those, a fourth.
+
+### The live receiver and the offline tools didn't actually connect to each other
+
+After a real webhook reached the server and landed in its ledger, the natural next step was reconciling it. Every offline tool refused. `index.js`'s webhook receiver appends each event to `data/ingested.jsonl` — one JSON object per line, the correct shape for a durable, append-only live log. `recon.js` and `discrepancy.js` instead expect a single JSON array at `data/ledger.json`. Nothing bridged the two.
+
+Manual attempts to paper over it — fetching `GET /ledger`'s `{count, records}` wrapper and writing the raw object in as `ledger.json`, then copying that same object in as a stand-in `truth.json` — produced `TypeError: ledger is not iterable` (the wrapper isn't an array) and then a reconciliation reporting `0.0%` on everything (a copy of the ledger is not an answer key; scoring against your own output as if it were the answer always looks perfect and means nothing).
+
+Fixed two ways. `export-live-ledger.js` does the NDJSON-to-array conversion correctly and repeatably, instead of leaving it to be reconstructed by hand:
+
+```bash
+node export-live-ledger.js --data ./data
+```
+
+And `recon.js` / `discrepancy.js` now treat `truth.json` as **optional**. Live, real-world data has no answer key — nobody writes down the "true" classification of a genuine external event in advance — and that's a fact about the world, not a bug to route around. Both tools now report what they actually found, plainly say there's no scorecard to show, and explain why, rather than crashing on the missing file or fabricating a comparison that isn't possible.
+
+### Fixing that broke something else — the exact bug class this project has now caught three times
+
+Adding a persistent idempotency store (the very first fix in this section) meant every `RazorpayClient` test that didn't specify its own store path defaulted to the real `data/idempotency-store.json` — the same file real manual testing had just been writing to. The full suite, run right after that manual session, failed two unrelated tests: a stale entry from the real testing session made a "fresh" dry-run call look like a replay, and made a call-count assertion see 0 instead of 1.
+
+This is the identical shape of bug as the async test harness (Day 10) and the `.gitignore` subdirectory gap (Day 11): fixing one real problem opened a test-isolation gap that only a subsequent real run exposed. The fix follows the established pattern too — every test that needs a `RazorpayClient` now gets its own throwaway store path via a shared `freshRzpClient()` helper, and a dedicated test simulates a real leftover file from manual testing and confirms a fresh client is unaffected by it, so this specific failure mode has to keep failing loudly if it's ever reintroduced.
 
 ---
 
@@ -571,7 +593,7 @@ cp .env.example .env
 # Generate a random value for CONTACT_SALT and paste it into .env:
 node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"
 
-npm test             # runs all 140 automated checks
+npm test             # runs all 146 automated checks
 npm run seed         # generates a reproducible test dataset + answer key
 npm run recon        # reconciles that dataset and scores itself against the answer key
 npm run sweep        # repeats the above across 25 independent datasets
@@ -611,7 +633,7 @@ axiom-recover/
     │   ├── base-rates.json            assumptions behind that simulation (needs citations)
     │   └── FROZEN.json                proof that the model above hasn't been altered
     └── test/
-        └── smoke.js                  140 automated checks
+        └── smoke.js                  146 automated checks
 ```
 
 ### Key engineering decisions
