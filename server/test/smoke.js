@@ -186,6 +186,46 @@ async function main() {
       });
   });
 
+  await t("idempotency survives a fresh client instance reading the same store file — the real bug this project shipped and a real user caught", async () => {
+    /* This is not a hypothetical. Manual testing against Razorpay's
+       real API found that two separate `node -e` process
+       invocations — the exact scenario a crashed-and-restarted
+       batch, or simply running the same CLI command twice, produces
+       — created two DIFFERENT payment links for identical
+       (entityId, action, attemptNo). The original bug had two
+       causes: an in-memory-only Map (fresh per process, remembers
+       nothing across a restart) and a header
+       (X-Razorpay-Idempotency-Key) that Razorpay's API silently
+       ignores for Payment Links — verified against Razorpay's own
+       docs, which only support idempotency on Payouts, Refunds, and
+       Direct Transfers, each with a distinct header. Two separate
+       RazorpayClient instances here stand in for two separate
+       processes; the fix is that they share a store FILE, not
+       memory. */
+    const storePath = path.join(require("os").tmpdir(), `axiom-idem-test-${Date.now()}-${Math.random().toString(36).slice(2)}.json`);
+    const args = { amountPaise: 10000, description: "x", entityId: "pay_restart_test", attemptNo: 1 };
+
+    const clientA = new RazorpayClient({ keyId: "rzp_test_a", keySecret: "b", idempotencyStorePath: storePath });
+    const first = await clientA.createPaymentLink(args);
+
+    const clientB = new RazorpayClient({ keyId: "rzp_test_a", keySecret: "b", idempotencyStorePath: storePath });
+    const second = await clientB.createPaymentLink(args);
+
+    assert.strictEqual(second.replayed, true, "a fresh client instance (standing in for a fresh process) must still recognise this as a duplicate");
+    assert.strictEqual(first.entity.id, second.entity.id, "the two 'processes' must resolve to the identical entity, not create two");
+
+    fs.unlinkSync(storePath);
+  });
+
+  await t("a corrupt or missing idempotency store file starts fresh rather than crashing", async () => {
+    const storePath = path.join(require("os").tmpdir(), `axiom-idem-corrupt-${Date.now()}.json`);
+    fs.writeFileSync(storePath, "{ this is not valid json");
+    const c = new RazorpayClient({ keyId: "rzp_test_a", keySecret: "b", idempotencyStorePath: storePath });
+    const r = await c.createPaymentLink({ amountPaise: 5000, description: "x", entityId: "pay_corrupt", attemptNo: 1 });
+    assert.strictEqual(r.replayed, undefined, "should proceed as a fresh call, not throw, when the store file is unreadable");
+    fs.unlinkSync(storePath);
+  });
+
   console.log("\nschema");
 
   await t("rejects a float amount", () => {

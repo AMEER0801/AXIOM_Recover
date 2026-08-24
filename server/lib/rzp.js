@@ -18,13 +18,45 @@
    whole project is a buildathon artifact; a live key reaching it
    is a mistake, and the right time to catch a mistake is at boot.
 
-   ── Idempotency is not optional ──────────────────────────────
+   ── Idempotency is not optional — and its real behaviour was found
+      the hard way, not assumed ─────────────────────────────────
    Every write carries a key derived deterministically from
    (entity, action, attempt). Retrying a request that already
-   succeeded returns the original result instead of charging twice.
-   Duplicate customer charges are the single worst outcome this
-   system could produce, so the key is required by signature —
-   a caller cannot forget to pass one.
+   succeeded is supposed to return the original result instead of
+   charging twice.
+
+   Manual testing against Razorpay's real API — the actual thing
+   this project's whole citation discipline exists to encourage —
+   proved the first version of this did NOT work: running the exact
+   same `createPaymentLink` call twice, in two separate `node -e`
+   invocations, produced two different payment links. Two things
+   were wrong at once, and either one alone would have caused it:
+
+     1. The idempotency cache lived only on `this._idem`, an
+        in-memory Map. A fresh `node` process — which is what any
+        real CLI invocation, cron job, or crash-and-restart is —
+        gets a fresh, empty Map. It caught nothing across process
+        boundaries, only duplicate calls within one running process.
+
+     2. The header this project sent, `X-Razorpay-Idempotency-Key`,
+        is not a header Razorpay's API recognises for Payment Links
+        (or Payments/Orders generally). Checked against Razorpay's
+        own documentation: idempotency is supported only on three
+        specific endpoints, each with its OWN distinct header —
+        `X-Payout-Idempotency` (Payouts), `X-Refund-Idempotency`
+        (Refunds), `X-Transfer-Idempotency` (Direct Transfers). There
+        is no generic idempotency header for Payment Links. Sending
+        one Razorpay doesn't recognise isn't neutral — it looks like
+        a safety mechanism to anyone reading the code, while doing
+        nothing on Razorpay's side.
+
+   Fixed by making the idempotency store a JSON file under `data/`
+   instead of an in-memory Map — it now survives a process restart,
+   which is the actual scenario that broke — and by no longer
+   sending the header that never did anything, so the code doesn't
+   claim a protection Razorpay was never providing. The real safety
+   here is, and always was, this project's OWN store; Razorpay's
+   API was never doing this project's idempotency checking for it. ──
 
    ── No SDK ───────────────────────────────────────────────────
    Plain fetch against the REST API. Node 22 has fetch built in.
@@ -34,6 +66,8 @@
    ══════════════════════════════════════════════════════════════ */
 
 const crypto = require("crypto");
+const fs = require("fs");
+const path = require("path");
 
 const API_BASE = "https://api.razorpay.com/v1";
 
@@ -44,8 +78,9 @@ class RazorpayClient {
    * @param {string} o.keySecret
    * @param {boolean} o.live      false (default) = simulate, never send
    * @param {number} o.timeoutMs
+   * @param {string} [o.idempotencyStorePath]  defaults to data/idempotency-store.json
    */
-  constructor({ keyId, keySecret, live = false, timeoutMs = 12000 } = {}) {
+  constructor({ keyId, keySecret, live = false, timeoutMs = 12000, idempotencyStorePath } = {}) {
     if (!keyId || !keySecret) throw new Error("RazorpayClient: keyId and keySecret are required");
 
     if (keyId.startsWith("rzp_live_") && process.env.ALLOW_LIVE_KEYS !== "yes-i-am-sure") {
@@ -63,14 +98,46 @@ class RazorpayClient {
     this.live = !!live;
     this.timeoutMs = timeoutMs;
 
-    /* Replayed idempotency keys resolve from here. In production this
-       is a shared store; in-process is correct for a single-node run
-       and is stated as such rather than left to be discovered. */
-    this._idem = new Map();
+    /* A file, not a Map — this is the fix. Replayed idempotency
+       keys must resolve across process restarts, because a real
+       retry (a crashed batch, a re-run CLI command, an operator
+       trying the same thing twice) IS a new process. A store that
+       only remembers what happened earlier in the SAME process
+       remembers nothing useful about the case it exists to protect
+       against. Still a single JSON file, not a shared database —
+       correct for a single-node run, stated as such rather than
+       left to be discovered by a second gap. */
+    this._idemStorePath = idempotencyStorePath || path.join(process.cwd(), "data", "idempotency-store.json");
+    this._idem = this._loadIdemStore();
 
     /* Every attempted call, live or simulated, in order. The audit
        chain reads this. */
     this.calls = [];
+  }
+
+  _loadIdemStore() {
+    try {
+      const raw = fs.readFileSync(this._idemStorePath, "utf8");
+      return new Map(Object.entries(JSON.parse(raw)));
+    } catch {
+      /* Missing or corrupt file both mean "nothing recorded yet" —
+         starting fresh here is correct; a JSON parse error should
+         not crash a payment-recovery run. */
+      return new Map();
+    }
+  }
+
+  _saveIdemStore() {
+    try {
+      fs.mkdirSync(path.dirname(this._idemStorePath), { recursive: true });
+      fs.writeFileSync(this._idemStorePath, JSON.stringify(Object.fromEntries(this._idem), null, 2));
+    } catch (e) {
+      /* A failed write here means THIS call's protection is
+         in-memory-only for the rest of this process — logged
+         loudly rather than silently, since it's exactly the
+         failure mode that caused the original bug. */
+      console.warn(`[rzp] could not persist idempotency store to disk: ${e.message} — this call's protection will not survive a process restart`);
+    }
   }
 
   /**
@@ -124,7 +191,7 @@ class RazorpayClient {
       const res = { ok: true, simulated: true, entity: this._simulate(path, body) };
       entry.outcome = "simulated";
       this.calls.push(entry);
-      if (isWrite) this._idem.set(idempotencyKey, res);
+      if (isWrite) { this._idem.set(idempotencyKey, res); this._saveIdemStore(); }
       return res;
     }
 
@@ -132,7 +199,11 @@ class RazorpayClient {
     const timer = setTimeout(() => ctrl.abort(), this.timeoutMs);
     try {
       const headers = { Authorization: this._auth(), "Content-Type": "application/json" };
-      if (idempotencyKey) headers["X-Razorpay-Idempotency-Key"] = idempotencyKey;
+      /* No idempotency header sent here — see the file header
+         comment. Razorpay does not recognise a generic one for
+         this endpoint, and sending one it ignores would misstate
+         where the real protection comes from (this project's own
+         persisted store, checked above, not Razorpay's server). */
 
       const r = await fetch(API_BASE + path, {
         method,
@@ -152,7 +223,7 @@ class RazorpayClient {
       entry.outcome = "ok";
       this.calls.push(entry);
       const res = { ok: true, simulated: false, entity: json };
-      if (isWrite) this._idem.set(idempotencyKey, res);
+      if (isWrite) { this._idem.set(idempotencyKey, res); this._saveIdemStore(); }
       return res;
     } catch (e) {
       /* An aborted or network-failed WRITE is the dangerous case:

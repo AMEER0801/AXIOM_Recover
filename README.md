@@ -46,7 +46,7 @@ This is an active build. Here is exactly what is finished and what is not, so th
 | Customer-response model | Simulates how a test customer would respond to each action, locked before agent logic exists | Done, locked |
 | Payment security layer | Verifies that incoming payment notifications are genuinely from Razorpay and not forged | Done, tested |
 | Razorpay connection | Sends requests to Razorpay's test system safely, with no risk of double-charging | Done, tested |
-| Automated tests | 138 checks that confirm the above claims are actually true | All passing |
+| Automated tests | 140 checks that confirm the above claims are actually true | All passing |
 | Reconciliation engine | Matches payments to settlements, explains gaps, triages what's left | Done, tested |
 | Gate layer (money firewall) | Every bounded/gated guarantee, enforced and unit-tested independently | Done, tested |
 | Recovery loop | Proposes an action, gates it, executes (dry-run), simulates the outcome, hands it to the reconciler | Done, tested |
@@ -192,6 +192,34 @@ The interface is deliberately not a dashboard. A reconciliation is a *document*:
 
 The scorecard reports the 25-batch sweep rather than the single batch on screen, because one batch is an anecdote and should not be dressed as a measurement just because it happens to be the one being displayed. The header shows whether the run is reportable yet — the same citation gate the command line enforces, surfaced where a reviewer can see it.
 
+
+
+---
+
+## A bug a real user found that no unit test could have — and what it says about testing against a real API
+
+This project's whole citation and verification discipline exists to catch exactly this kind of thing, and it worked, though not the way it was expected to.
+
+Manually testing `createPaymentLink()` against Razorpay's real test-mode API — the thing the project's own testing guide recommends — ran the identical call twice, in two separate terminal commands, expecting the second one to come back marked `"replayed": true`. It didn't. Two different payment links were created, with two different IDs.
+
+**Two separate causes, either one alone sufficient:**
+
+1. The idempotency cache was an in-memory `Map` on the client object. A fresh `node` process — which is what *any* separate command invocation, cron run, or crash-and-restart actually is — gets a fresh, empty `Map`. It only ever caught a duplicate call within one already-running process; it had never been tested across a process boundary, because the automated test suite never spans one.
+
+2. The header this project sent, `X-Razorpay-Idempotency-Key`, is not a header Razorpay's real API honours for Payment Links. Checked against Razorpay's own documentation (not assumed): idempotency is supported on exactly three endpoints, each with its **own** distinct header — `X-Payout-Idempotency` for Payouts, `X-Refund-Idempotency` for Refunds, `X-Transfer-Idempotency` for Direct Transfers. There is no generic idempotency header for Payment Links. Razorpay's server was silently ignoring a header that looked, to anyone reading this project's code, like it was doing exactly the job it claimed to do.
+
+**Why 140 passing tests never caught this:** every existing idempotency test used one `RazorpayClient` instance for both calls in the pair — which the in-memory Map handles correctly, and always did. The bug only exists across *two different instances* (standing in for two different processes), a scenario the test suite had simply never modelled, because nothing prompted anyone to model it until a real API call proved it mattered.
+
+**The fix:** the idempotency store is now a JSON file under `data/`, not a `Map` — it survives a process restart, which is the actual failure mode that broke. The header that Razorpay was ignoring is no longer sent, so the code no longer implies a server-side protection that was never real. Two new tests model the exact scenario that broke: two separate client instances sharing one store file must resolve to the identical entity, and a corrupted or missing store file must degrade to "start fresh," never a crash.
+
+Verified the same way the bug was found — by actually running it, twice, in two separate processes, against the fix:
+
+```
+Call 1 (fresh process): plink_a3ef270cc1c72b, replayed: false
+Call 2 (fresh process, same entity+attempt): plink_a3ef270cc1c72b, replayed: true
+```
+
+This is also the strongest available evidence for why the manual-testing guide (see `AXIOM-RECOVER-vscode-testing-guide.md`) is not an optional afterthought to the automated suite — it is a different, complementary way of being wrong that 140 unit tests, however thorough, structurally cannot reach on their own.
 
 ---
 
@@ -543,7 +571,7 @@ cp .env.example .env
 # Generate a random value for CONTACT_SALT and paste it into .env:
 node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"
 
-npm test             # runs all 138 automated checks
+npm test             # runs all 140 automated checks
 npm run seed         # generates a reproducible test dataset + answer key
 npm run recon        # reconciles that dataset and scores itself against the answer key
 npm run sweep        # repeats the above across 25 independent datasets
@@ -583,7 +611,7 @@ axiom-recover/
     │   ├── base-rates.json            assumptions behind that simulation (needs citations)
     │   └── FROZEN.json                proof that the model above hasn't been altered
     └── test/
-        └── smoke.js                  138 automated checks
+        └── smoke.js                  140 automated checks
 ```
 
 ### Key engineering decisions
