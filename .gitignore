@@ -6,9 +6,15 @@ node_modules/
 .env.*
 !.env.example
 
-# Generated test data (regenerate with: npm run seed)
-server/data/*.json
-server/data/*.jsonl
+# Generated test data and run artifacts (regenerate with:
+# npm run seed / recon / recover / discrepancy). A single-star
+# glob does not cross a directory boundary in gitignore syntax, so
+# this must match the whole data/ contents, not just data/*.json —
+# an earlier version of this file only covered loose files directly
+# inside data/ and silently missed everything inside data/recon/,
+# data/recover/, and data/discrepancy/. Verified with a real git
+# repo and `git status`, not assumed from the pattern reading right.
+server/data/*
 !server/data/.gitkeep
 
 # OS / editor noise

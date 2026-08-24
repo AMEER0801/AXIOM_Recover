@@ -22,7 +22,8 @@
     "eval": "node eval.js --seeds 20 --records 200 --rounds 8",
     "recon:recovered": "node recon.js --data ./data/recover",
     "ui:recovery": "node ../ui/build-recovery.js --seed 42 --records 200 --rounds 8",
-    "recover:llm": "node recover.js --seed 42 --records 200 --llm"
+    "recover:llm": "node recover.js --seed 42 --records 200 --llm",
+    "discrepancy": "node discrepancy.js --data ./data"
   },
   "dependencies": {}
 }

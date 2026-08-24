@@ -132,6 +132,65 @@ const AMOUNT_BANDS = {
 
 const MERCHANTS = ["acme_retail", "sundar_spares", "kovai_textiles", "nimbus_saas", "vaigai_traders"];
 
+/* Contracted merchant-discount-rate, in basis points, per merchant.
+   Real merchants negotiate different rates by volume and vertical
+   — 200bps (2.00%) is Razorpay's commonly-cited standard card rate,
+   used here as the default; two merchants have negotiated below it.
+   This is the rate discrepancy.js checks actual charges against —
+   deliberately a SEPARATE table from anything recon.js reads, so
+   the two files can never quietly agree by construction. */
+const CONTRACTED_MDR_BPS = Object.freeze({
+  acme_retail: 200,
+  sundar_spares: 200,
+  kovai_textiles: 190,     // negotiated 10bps below standard
+  nimbus_saas: 180,        // negotiated 20bps below standard — higher volume
+  vaigai_traders: 200,
+});
+/* The standard rate a billing system would fall back to if a
+   merchant's special pricing flag were not honoured — the specific,
+   realistic failure mode this phenomenon simulates, not a random
+   number. */
+const STANDARD_MDR_BPS = 200;
+
+/* Per-merchant, per-batch: does this merchant's account currently
+   have its negotiated rate silently reverting to standard? Modelled
+   as an account-level condition (affects every one of that
+   merchant's transactions in the batch), not per-transaction noise
+   — a real rate-configuration bug does not roll new dice per
+   payment, it is wrong until someone notices and fixes it. Only
+   merchants with a below-standard contracted rate can even exhibit
+   this; a merchant already on the standard rate has nothing to
+   revert to. */
+function rollRateCreep(seed, merchant) {
+  if (CONTRACTED_MDR_BPS[merchant] === STANDARD_MDR_BPS) return false;
+  const r = rngFor(seed, "rate-creep", merchant);
+  return r() < 0.4;   /* a product decision (how often this bug pattern occurs), not a citation */
+}
+
+/* ── guaranteeing the phenomenon actually appears ────────────────
+   Measured, not assumed: with two eligible merchants at 40% each,
+   roughly 36% of batches would show zero rate discrepancies at all
+   — confirmed empirically at 12/30 sampled seeds. This is the same
+   failure mode already fixed twice elsewhere in this file (rare
+   settlement breaks, rare mandate reasons): a phenomenon worth
+   building a whole detector for should not be left to a coin flip
+   on whether the demo batch happens to contain one. If neither
+   eligible merchant rolls true, one is forced, deterministically,
+   and the forcing is disclosed rather than hidden. */
+function resolveRateCreep(seed) {
+  const eligible = Object.keys(CONTRACTED_MDR_BPS).filter((m) => CONTRACTED_MDR_BPS[m] !== STANDARD_MDR_BPS);
+  const status = {};
+  eligible.forEach((m) => { status[m] = rollRateCreep(seed, m); });
+
+  let forced = null;
+  if (eligible.length && !eligible.some((m) => status[m])) {
+    const idx = Math.floor(rngFor(seed, "rate-creep-force")() * eligible.length);
+    forced = eligible[idx];
+    status[forced] = true;
+  }
+  return { status, forced };
+}
+
 function hex(rand, n) {
   const c = "0123456789abcdef";
   let s = "";
@@ -170,6 +229,13 @@ function generate({ seed = 42, records = 200, days = 30, now = ANCHOR_EPOCH } = 
   const ledger = [];
   const truth = { payments: {}, summary: {} };
   const breakCounts = {};
+
+  /* Resolved once, up front — every transaction for an affected
+     merchant reads the same decision, and the disclosure (which
+     merchant, whether forcing was needed) is available for the
+     summary regardless of how many settled records this batch
+     happens to contain. */
+  const rateCreep = resolveRateCreep(seed);
 
   /* Split the batch: at-risk records carry the Track 3 workload,
      settled records carry the Track 4 workload. Roughly 60/40 so
@@ -334,13 +400,29 @@ function generate({ seed = 42, records = 200, days = 30, now = ANCHOR_EPOCH } = 
     const brk = assignments[i];
     breakCounts[brk] = (breakCounts[brk] || 0) + 1;
 
-    /* Razorpay-style fee plus GST on the fee. Exact percentages
-       depend on the merchant's pricing plan, so the reconciler must
-       never hard-code them — it derives expected fee from the
-       settlement file and flags variance, which is what the
-       fee_variance break exercises. */
-    const feeBps = 200;                                      /* 2.00% nominal */
-    const fee = Math.round((amount * feeBps) / 10000);
+    /* Two independent questions about this fee, deliberately kept
+       independent:
+
+         1. Does the SETTLEMENT match the RECORDED fee? — recon.js's
+            job, exercised by the break classes above (fee_variance,
+            amount_mismatch, ...). The reconciler never hard-codes a
+            rate; it derives what's expected from the recorded fee
+            itself and flags a mismatch against the settlement.
+
+         2. Does the RECORDED fee match what was actually CONTRACTED
+            with this merchant? — discrepancy.js's job. A settlement
+            can tie out perfectly against the recorded fee (question
+            1: clean) while the recorded fee itself silently used the
+            wrong rate (question 2: wrong) — a systematic overcharge
+            that reconciliation alone cannot see, because internal
+            consistency and external correctness are different
+            claims. `appliedBps` below is what actually gets charged
+            and recorded; `CONTRACTED_MDR_BPS[merchant]` is the
+            separate, independent figure discrepancy.js checks it
+            against. */
+    const rateCreepActive = rateCreep.status[merchant] || false;
+    const appliedBps = rateCreepActive ? STANDARD_MDR_BPS : CONTRACTED_MDR_BPS[merchant];
+    const fee = Math.round((amount * appliedBps) / 10000);
     const tax = Math.round(fee * 0.18);
     let net = amount - fee - tax;
 
@@ -385,7 +467,18 @@ function generate({ seed = 42, records = 200, days = 30, now = ANCHOR_EPOCH } = 
       ...over,
     });
 
-    const t = { payment_id: payId, gross_paise: amount, expected_net_paise: net, break: brk, reconciles: brk === "clean" };
+    const t = {
+      payment_id: payId, gross_paise: amount, expected_net_paise: net, break: brk, reconciles: brk === "clean",
+      /* Independent of everything above — this is the answer key
+         for discrepancy.js, not recon.js. A payment can be
+         `reconciles: true` here (settlement matches recorded fee)
+         and STILL have `rate_matches_contract: false` (the recorded
+         fee used the wrong bps) at the same time. That combination
+         is the whole point of building this as a separate check. */
+      contracted_fee_bps: CONTRACTED_MDR_BPS[merchant],
+      applied_fee_bps: appliedBps,
+      rate_matches_contract: appliedBps === CONTRACTED_MDR_BPS[merchant],
+    };
 
     switch (brk) {
       case "clean":
@@ -468,6 +561,26 @@ function generate({ seed = 42, records = 200, days = 30, now = ANCHOR_EPOCH } = 
         t.duplicate_of = payId;
         t.duplicate_payment_id = dupId;
         t.note = "two captures seconds apart for one order";
+        /* Caught by discrepancy.js's own scoring not adding up to
+           the ledger's payment_captured count: the duplicate's
+           record exists in the ledger with its own entity.id, but
+           until this line, truth.payments had NO entry for that id
+           at all — only for the original. Any scorer that iterates
+           truth.payments (this file's own recon.js score(), and
+           discrepancy.js's) would silently skip the duplicate
+           entirely: not a true positive, not a false positive, not
+           counted anywhere, while a detector that correctly flagged
+           it got no credit and one that missed it got no penalty.
+           Every payment_captured record gets a truth entry — no
+           exceptions — and the duplicate inherits the same rate
+           fields as the original since it's a spread copy charged
+           under the same (possibly wrong) applied rate. */
+        truth.payments[dupId] = {
+          payment_id: dupId, gross_paise: amount, expected_net_paise: net,
+          break: "duplicate_payment", reconciles: false,
+          contracted_fee_bps: t.contracted_fee_bps, applied_fee_bps: t.applied_fee_bps, rate_matches_contract: t.rate_matches_contract,
+          duplicate_of: payId, note: "the duplicate capture itself",
+        };
         break;
       }
 
@@ -499,6 +612,12 @@ function generate({ seed = 42, records = 200, days = 30, now = ANCHOR_EPOCH } = 
     dnc_customers: ledger.filter((r) => r.customer?.dnc).length,
     break_mix_realised: breakCounts,
     true_exceptions: Object.values(truth.payments).filter((p) => !p.reconciles).length,
+    rate_discrepancies: Object.values(truth.payments).filter((p) => p.rate_matches_contract === false).length,
+    merchants_with_rate_creep: [...new Set(Object.entries(truth.payments).filter(([, p]) => p.rate_matches_contract === false).map(([id]) => {
+      const rec = ledger.find((r) => r.kind === "payment_captured" && r.entity.id === id);
+      return rec ? rec.merchant_id : null;
+    }).filter(Boolean))],
+    rate_creep_forced: rateCreep.forced,
   };
 
   return { ledger: clean, quarantined, truth };
@@ -533,10 +652,13 @@ if (require.main === module) {
   console.log(`  do-not-contact ....... ${s.dnc_customers}`);
   console.log(`  true exceptions ...... ${s.true_exceptions} (answer key in truth.json)`);
   console.log(`  break mix ............ ${Object.entries(s.break_mix_realised).map(([k, v]) => `${k}:${v}`).join("  ")}`);
+  if (s.rate_discrepancies > 0) {
+    console.log(`  rate discrepancies ... ${s.rate_discrepancies} payments, merchant(s): ${s.merchants_with_rate_creep.join(", ")}${s.rate_creep_forced ? ` (forced: ${s.rate_creep_forced} — too rare to trust to chance at this n)` : ""}`);
+  }
   if (s.mandate_reasons_forced.length) {
     console.log(`  mandate coverage ..... forced: ${s.mandate_reasons_forced.join(", ")} (too rare to trust to chance at this n)`);
   }
   console.log(`\n  re-run with the same --seed to reproduce this batch exactly.\n`);
 }
 
-module.exports = { generate, AT_RISK_MIX, BREAK_MIX, REASON_MIX };
+module.exports = { generate, AT_RISK_MIX, BREAK_MIX, REASON_MIX, CONTRACTED_MDR_BPS, STANDARD_MDR_BPS };

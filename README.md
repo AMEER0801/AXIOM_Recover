@@ -46,7 +46,7 @@ This is an active build. Here is exactly what is finished and what is not, so th
 | Customer-response model | Simulates how a test customer would respond to each action, locked before agent logic exists | Done, locked |
 | Payment security layer | Verifies that incoming payment notifications are genuinely from Razorpay and not forged | Done, tested |
 | Razorpay connection | Sends requests to Razorpay's test system safely, with no risk of double-charging | Done, tested |
-| Automated tests | 120 checks that confirm the above claims are actually true | All passing |
+| Automated tests | 138 checks that confirm the above claims are actually true | All passing |
 | Reconciliation engine | Matches payments to settlements, explains gaps, triages what's left | Done, tested |
 | Gate layer (money firewall) | Every bounded/gated guarantee, enforced and unit-tested independently | Done, tested |
 | Recovery loop | Proposes an action, gates it, executes (dry-run), simulates the outcome, hands it to the reconciler | Done, tested |
@@ -54,6 +54,7 @@ This is an active build. Here is exactly what is finished and what is not, so th
 | Audit trail | Hash-chained, tamper-evident record of every decision, exportable | Done, tested |
 | Recovery console | Decision ribbon, full gate traces, gate coverage, verified recovery | Done |
 | LLM policy (third arm) | An actual model proposes actions, validated by the same gates | Done, tested |
+| Discrepancy claims | Catches money the platform itself owes the merchant, not just customers | Done, tested |
 | Sourced assumptions | Replacing placeholder estimates with cited real-world figures | In progress |
 
 ## Architecture
@@ -451,6 +452,45 @@ The choice persists across pages via a URL parameter (`?theme=dark`) rather than
 
 The handful of true hero figures — the ledger's tie-out amounts, the recovery arms' net totals — count up over ~700ms instead of appearing instantly, the way a mechanical counter settles on a final value. Every other number on both pages — table rows, ribbon cells, gate coverage cards — still renders immediately. Animating everything would make the page feel busy rather than considered; this is spent in exactly the two or three places it earns its keep, and `prefers-reduced-motion` skips it entirely.
 
+
+---
+
+## A different direction entirely: money the platform owes the merchant
+
+Every file up to this point recovers money a *customer* owes the merchant. `discrepancy.js` checks the opposite direction — money *Razorpay itself* owes the merchant, because the fee it charged doesn't match what was actually contracted.
+
+### Why recon.js cannot catch this, even though it already exists
+
+`recon.js` proves **internal consistency**: does the settlement match the fee that was recorded on the payment? A billing system that silently reverts a merchant's negotiated rate back to the standard one produces books that are internally perfect — every settlement correctly ties out against the fee that was (wrongly) deducted — while the merchant is systematically overcharged in a way reconciliation alone will never surface, because reconciliation was never asked whether the *rate itself* was right.
+
+`discrepancy.js` checks **external correctness** instead: it independently recomputes the expected fee from each merchant's *contracted* rate — a completely separate reference table from anything `recon.js` reads — and flags where the recorded fee doesn't match it. A payment can be `reconciles: true` in the ledger console and still be flagged here; that combination is the whole point of building this as a separate check rather than folding it into the existing one.
+
+### What this does *not* do, and why — checked, not assumed
+
+Before writing a line of this, Razorpay's actual public API was checked rather than assumed. Its Disputes API exists for the opposite direction — a customer or the issuing bank disputing a payment — and its documented actions are limited to *accepting* or *contesting* a dispute already raised. There is no public endpoint for a merchant to programmatically file a dispute over Razorpay's own fee calculation; that path is a support request, not an API call.
+
+So `discrepancy.js` does not "file" anything, and no claim object in this file ever carries a status implying it was submitted. It produces a complete, evidence-backed claim — merchant, transaction count, the two rates, the cumulative amount, sample payment IDs — rendered as the exact ticket text a person pastes into a support request. It automates the tedious 90% (finding the pattern, gathering the evidence, computing the number) and leaves the actual submission, correctly, to a human. There's a test whose entire job is to make sure this stays true: it asserts no claim status other than `drafted` or `monitor` exists anywhere in the output, specifically so a future edit can't quietly start implying automatic filing without that claim being re-checked against Razorpay's real API first.
+
+### Claims are aggregated, not filed one per transaction
+
+A rate misconfiguration is an account-level condition — it affects every charge on that account until someone fixes it, not a random subset. Filing one ticket per affected payment would be spam and would bury the pattern a support agent actually needs to see. Findings are grouped by merchant into **one** claim citing the transaction count, the consistent rate delta, and the cumulative amount — the way a real finance team would actually raise it. A pattern below a materiality threshold (transaction count and cumulative amount both configurable, both stated as product decisions rather than citations) is still tracked, marked `monitor` rather than `drafted`, since a ticket costs a person's time too and a ₹15 pattern isn't worth spending it.
+
+### A real bug this surfaced — in code that already shipped
+
+Building this and checking that "payments examined" equalled "TP+FP+FN+TN" surfaced a genuine, pre-existing gap: `seed.js`'s duplicate-payment case created a second `payment_captured` ledger record for the duplicate charge, but never wrote a truth-answer-key entry for that duplicate's own ID — only for the original. Any scorer that iterates the answer key (this file's, and it turns out `recon.js`'s own `score()` too) would silently skip that duplicate entirely: not a true positive, not a false positive, not counted anywhere. `recon.js`'s own behaviour was never wrong — a direct test already confirmed both halves of a duplicate get flagged — but its **reported** precision/recall had a small, real blind spot that nothing had exercised until a second detector's totals refused to add up.
+
+Fixed at the source: every `payment_captured` record now gets its own answer-key entry, no exceptions. Verified two ways — a new test asserts every captured payment has a truth entry across multiple seeds, and re-running `recon.js`'s own sweep confirmed its scored-payment count now exactly matches its examined-payment count on every seed checked, something that was silently one short before.
+
+### A second bug this surfaced — the repo's own hygiene, not just its code
+
+Fixing where this file writes its output (an earlier version pointed one directory too high, out from under `data/` entirely) prompted an actual test of `.gitignore` against a real git repository rather than trusting the pattern by reading it. `server/data/*.json` looks like it should exclude everything generated under `data/` — it doesn't. A single-star glob does not cross a directory boundary in `.gitignore` syntax, so it only ever covered loose files sitting directly in `data/`; everything inside `data/recon/`, `data/recover/`, and now `data/discrepancy/` was silently untracked-by-policy but not actually gitignored. `git add -A` on the real project directory staged all of it.
+
+The real GitHub history was checked and is clean — every push so far had these folders manually removed before committing, so nothing ever actually leaked — but the safety net behind that manual step didn't exist. Fixed to `server/data/*` (a directory-level match, which excludes everything inside it, not just files that happen to sit directly inside `data/`), and verified the same way the bug was found: a real `git init` and `git add -A` on the actual project tree, confirming exactly one file (`server/data/.gitkeep`) gets staged.
+
+### Why 100% precision and recall here is not the same red flag it would be elsewhere
+
+`recon.js`'s explanation-accuracy metric is deliberately *not* allowed to reach 100% — a test fails if it ever does, on the theory that a perfect score there would mean a threshold had been quietly fitted to the answer key (see "Results so far: the reconciliation engine" above). This file's 100% precision and recall across 25 independent batches is a different situation, checked rather than assumed to be fine: the phenomenon this file detects is binary by construction in this synthetic model — a transaction was billed at *exactly* the contracted rate or *exactly* the standard rate, with no partial-drift or overlapping middle ground the way `recon.js`'s fee-variance and amount-mismatch classes deliberately overlap. A clean detection problem legitimately produces a clean score; the two files were checked for which kind of problem they actually have, not given the same pass/fail bar by default.
+
 ---
 
 ## For technical reviewers
@@ -465,7 +505,7 @@ cp .env.example .env
 # Generate a random value for CONTACT_SALT and paste it into .env:
 node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"
 
-npm test             # runs all 120 automated checks
+npm test             # runs all 138 automated checks
 npm run seed         # generates a reproducible test dataset + answer key
 npm run recon        # reconciles that dataset and scores itself against the answer key
 npm run sweep        # repeats the above across 25 independent datasets
@@ -476,6 +516,7 @@ npm run gates:demo   # 7 scenarios, each tripping exactly one gate, full trace p
 npm run recover      # runs the recovery loop: baseline vs smart, one batch, full comparison
 npm run eval         # repeats that comparison across 20 independent batches
 npm run recover:llm  # third arm: a real LLM (Groq, free tier, no card) proposes actions
+npm run discrepancy  # finds money the PLATFORM owes the merchant — a different direction entirely
 npm run recon:recovered  # reconciles the money the recovery loop just recovered
 npm run check        # verifies the locked model hasn't changed, and checks citations
 npm start            # starts the server that receives Razorpay webhooks
@@ -504,7 +545,7 @@ axiom-recover/
     │   ├── base-rates.json            assumptions behind that simulation (needs citations)
     │   └── FROZEN.json                proof that the model above hasn't been altered
     └── test/
-        └── smoke.js                  120 automated checks
+        └── smoke.js                  138 automated checks
 ```
 
 ### Key engineering decisions
@@ -531,7 +572,7 @@ Both are documented here rather than hidden, because a project that only shows i
 
 - The current assumptions in `base-rates.json` are reasonable placeholder estimates, not yet backed by cited sources. This is flagged automatically by `npm run check`, which will not allow results to be called final until this is resolved.
 - The rupee-value recovery delta is directionally positive but not yet statistically stable at this batch size (see "The recovery loop" section above) — the count-based recovery-rate delta is the claim currently worth relying on.
-- The visual dashboard for the recovery side (as opposed to the reconciliation side, which `ui/ledger.html` already covers) is still being built.
+- `discrepancy.js`'s claims still need a human to actually copy the rendered ticket text into a Razorpay support request — no API exists for this project (or any merchant) to file that automatically, confirmed against Razorpay's own documentation rather than assumed.
 - `recover.js` always runs in simulate mode — a real "live" mode, where outcomes arrive asynchronously through `index.js`'s webhook receiver instead of being resolved inline by the frozen model, is a documented extension of the same propose/gate/execute spine, not yet built.
 - The mapping between Razorpay's real webhook format and this project's internal data format should be checked against Razorpay's current API documentation before connecting to live data, as APIs can change over time.
 - Spend-cap and approval-ceiling figures in `gates.js` (₹5,000 per run, ₹20,000 per day, ₹10,000 auto-approval threshold) are placeholder business decisions, not citations — unlike the quiet-hours window, nothing regulatory pins these numbers, and they should be set deliberately before this runs against a real merchant's book.

@@ -30,6 +30,8 @@ const { evaluateGates, GATE_NAMES, createAttemptLedger, createSpendTracker, crea
 const { baselinePolicy, smartPolicy, runBatch, compareArms, AT_RISK_KINDS } = require("../recover");
 const { createAuditChain, verifyChain, toCSV, gateCoverage, canonical, GENESIS_PREV } = require("../audit");
 const { llmPolicy, callModel, buildUserPrompt, parseAction, VALID_ACTIONS, estimateUsdCost } = require("../llm-policy");
+const { detectRateDiscrepancies, buildPatternClaims, buildIndividualClaims, renderClaimText, score: discScore, claimId, CLAIM_POLICY } = require("../discrepancy");
+const { CONTRACTED_MDR_BPS, STANDARD_MDR_BPS } = require("../seed");
 
 async function main() {
   let pass = 0, fail = 0;
@@ -349,7 +351,13 @@ async function main() {
   await t("both halves of a duplicate pair are flagged, with roles", () => {
     const { ledger, truth } = generate({ seed: 42, records: 200 });
     const out = reconcile(ledger);
-    const dupes = Object.entries(truth.payments).filter(([, v]) => v.break === "duplicate_payment");
+    /* Both the original's and the duplicate's own truth entries carry
+       break: "duplicate_payment" (the duplicate's own entry was added
+       after a scoring gap was found — see the seed.js comment at
+       that case), so this filters specifically for the ORIGINAL side
+       of each pair via its duplicate_payment_id cross-reference,
+       rather than matching both sides and being unable to tell them apart. */
+    const dupes = Object.entries(truth.payments).filter(([, v]) => v.break === "duplicate_payment" && v.duplicate_payment_id);
     assert.ok(dupes.length > 0);
     for (const [pid, tr] of dupes) {
       const orig = out.results.find((x) => x.payment_id === pid);
@@ -1125,7 +1133,127 @@ await t("every test invocation in this file is awaited — a self-check on the s
   assert.deepStrictEqual(offenders, [], `un-awaited t( call(s) at line(s): ${offenders.join(", ")}`);
 });
 
-  console.log(`\n${pass} passed, ${fail} failed\n`);
+  
+console.log("\ndiscrepancy — money owed by the platform, not by a customer");
+
+await t("every payment_captured record in the ledger has a truth entry — the scoring-completeness bug stays fixed", () => {
+  for (const seed of [42, 100, 500, 999]) {
+    const { ledger, truth } = generate({ seed, records: 200 });
+    const capturedIds = ledger.filter((r) => r.kind === "payment_captured").map((r) => r.entity.id);
+    const missing = capturedIds.filter((id) => !(id in truth.payments));
+    assert.deepStrictEqual(missing, [], `seed ${seed}: payment(s) with no truth entry: ${missing.join(", ")}`);
+  }
+});
+
+await t("detectRateDiscrepancies finds exactly the payments truth marks as rate_matches_contract:false", () => {
+  const { ledger } = generate({ seed: 42, records: 200 });
+  const truth42 = generate({ seed: 42, records: 200 }).truth;
+  const findings = detectRateDiscrepancies(ledger);
+  const sc = discScore(findings, truth42);
+  assert.strictEqual(sc.confusion.fp, 0);
+  assert.strictEqual(sc.confusion.fn, 0);
+  assert.ok(sc.confusion.tp > 0, "expected at least one real discrepancy on this seed to test against");
+});
+
+await t("a payment exactly at the contracted rate is never flagged", () => {
+  const clean = { kind: "payment_captured", merchant_id: "acme_retail", entity: { id: "pay_clean" }, amount_paise: 100000, fee_paise: Math.round(100000 * CONTRACTED_MDR_BPS.acme_retail / 10000) };
+  const findings = detectRateDiscrepancies([clean]);
+  assert.deepStrictEqual(findings, []);
+});
+
+await t("a payment charged at the standard rate instead of a merchant's better negotiated rate is flagged as an overcharge", () => {
+  const wrong = { kind: "payment_captured", merchant_id: "nimbus_saas", entity: { id: "pay_wrong" }, amount_paise: 100000, fee_paise: Math.round(100000 * STANDARD_MDR_BPS / 10000) };
+  const findings = detectRateDiscrepancies([wrong]);
+  assert.strictEqual(findings.length, 1);
+  assert.ok(findings[0].overcharge_paise > 0);
+});
+
+await t("a rounding-sized difference is inside tolerance and is not flagged", () => {
+  const contracted = CONTRACTED_MDR_BPS.acme_retail;
+  const exact = Math.round(100000 * contracted / 10000);
+  const offByOnePaisa = { kind: "payment_captured", merchant_id: "acme_retail", entity: { id: "pay_round" }, amount_paise: 100000, fee_paise: exact + 1 };
+  const findings = detectRateDiscrepancies([offByOnePaisa]);
+  assert.deepStrictEqual(findings, [], "a 1-paisa rounding difference on a ₹1,000 charge is well inside 1bps tolerance");
+});
+
+await t("an unknown merchant is skipped rather than guessed at", () => {
+  const unknown = { kind: "payment_captured", merchant_id: "not_a_real_merchant", entity: { id: "pay_x" }, amount_paise: 100000, fee_paise: 5000 };
+  assert.deepStrictEqual(detectRateDiscrepancies([unknown]), []);
+});
+
+await t("buildPatternClaims only claims overcharges, never undercharges", () => {
+  const under = { payment_id: "p1", merchant_id: "acme_retail", overcharge_paise: -500, implied_bps: 195, contracted_bps: 200, ts: "2026-01-01T00:00:00.000Z" };
+  const claims = buildPatternClaims([under, under, under]);
+  assert.deepStrictEqual(claims, [], "three undercharges should never produce a claim");
+});
+
+await t("a pattern below the materiality threshold is marked monitor, not drafted", () => {
+  const tiny = (i) => ({ payment_id: `p${i}`, merchant_id: "kovai_textiles", overcharge_paise: 1, implied_bps: 200, contracted_bps: 190, ts: "2026-01-01T00:00:00.000Z" });
+  const findings = [tiny(1), tiny(2), tiny(3)];
+  const claims = buildPatternClaims(findings);
+  assert.strictEqual(claims.length, 1);
+  assert.strictEqual(claims[0].status, "monitor", "3 paise total should not clear the filing threshold");
+});
+
+await t("a pattern that clears both count and amount thresholds is drafted, ready to file", () => {
+  const real = (i) => ({ payment_id: `p${i}`, merchant_id: "kovai_textiles", overcharge_paise: 5000, implied_bps: 200, contracted_bps: 190, ts: "2026-01-01T00:00:00.000Z" });
+  const findings = [real(1), real(2), real(3), real(4)];
+  const claims = buildPatternClaims(findings);
+  assert.strictEqual(claims.length, 1);
+  assert.strictEqual(claims[0].status, "drafted");
+  assert.strictEqual(claims[0].total_overcharge_paise, 20000);
+});
+
+await t("claim IDs are deterministic for the same merchant and payment set", () => {
+  const a = claimId("acme_retail", ["p1", "p2"]);
+  const b = claimId("acme_retail", ["p2", "p1"]);   // order-independent
+  const c = claimId("acme_retail", ["p1", "p3"]);
+  assert.strictEqual(a, b);
+  assert.notStrictEqual(a, c);
+});
+
+await t("an individual claim never double-counts a payment already covered by a pattern claim", () => {
+  const items = Array.from({ length: 4 }, (_, i) => ({ payment_id: `p${i}`, merchant_id: "kovai_textiles", overcharge_paise: 6000, implied_bps: 200, contracted_bps: 190, ts: "2026-01-01T00:00:00.000Z" }));
+  const patterns = buildPatternClaims(items);
+  const individuals = buildIndividualClaims(items, patterns);
+  assert.deepStrictEqual(individuals, [], "every one of these payments is already inside the pattern claim");
+});
+
+await t("a one-off finding that never joins a pattern still gets its own claim above the individual threshold", () => {
+  const lonely = [{ payment_id: "p_lonely", merchant_id: "nimbus_saas", overcharge_paise: 9000, implied_bps: 200, contracted_bps: 180, ts: "2026-01-01T00:00:00.000Z" }];
+  const patterns = buildPatternClaims(lonely);   // 1 transaction never reaches pattern count
+  assert.strictEqual(patterns.length, 1);
+  assert.strictEqual(patterns[0].status, "monitor");
+  const individuals = buildIndividualClaims(lonely, []);   // scored independently of the (monitor-only) pattern
+  assert.strictEqual(individuals.length, 1);
+  assert.strictEqual(individuals[0].status, "drafted");
+});
+
+await t("rendered claim text names the merchant, the two rates, and the cumulative amount — no placeholder left in", () => {
+  const claim = { claim_id: "disc_test", type: "pattern", status: "drafted", merchant_id: "kovai_textiles", transaction_count: 4, total_overcharge_paise: 20000, contracted_bps: 190, observed_bps: 200, period_start: "2026-01-01T00:00:00.000Z", period_end: "2026-01-05T00:00:00.000Z", sample_payment_ids: ["p1", "p2"] };
+  const text = renderClaimText(claim);
+  assert.ok(text.includes("kovai_textiles"));
+  assert.ok(text.includes("1.90%"));
+  assert.ok(text.includes("2.00%"));
+  assert.ok(text.includes("₹200.00"));
+  assert.ok(!text.includes("undefined") && !text.includes("NaN"));
+});
+
+await t("Razorpay's real Disputes API only accepts or contests an existing dispute — this file never claims to auto-file, and its claim objects say so via status, not a false completion state", () => {
+  /* This is not a network test — it is a guard against the claim
+     object's own vocabulary drifting toward overclaiming. There is
+     no "submitted" or "filed" status anywhere in this file's
+     output; the two states are "drafted" (ready for a human) and
+     "monitor" (not yet worth a human's time). If a future edit adds
+     a status implying automatic submission, this test is where
+     that claim should be caught and justified against a real,
+     re-verified Razorpay API capability — not added quietly. */
+  const draftedPossible = ["drafted", "monitor"];
+  const items = Array.from({ length: 4 }, (_, i) => ({ payment_id: `p${i}`, merchant_id: "kovai_textiles", overcharge_paise: 6000, implied_bps: 200, contracted_bps: 190, ts: "2026-01-01T00:00:00.000Z" }));
+  for (const c of buildPatternClaims(items)) assert.ok(draftedPossible.includes(c.status));
+});
+
+console.log(`\n${pass} passed, ${fail} failed\n`);
   process.exit(fail ? 1 : 0);
 }
 
