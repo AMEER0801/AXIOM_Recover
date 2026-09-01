@@ -1,0 +1,72 @@
+/* Trace list --------------------------------------------------------- */
+
+.ax-gates { list-style: none; margin: 0; padding: 0; counter-reset: gate; }
+
+.ax-gate {
+  display: grid;
+  grid-template-columns: 26px 16px 22ch 1fr;
+  gap: var(--s-3);
+  align-items: baseline;
+  padding: var(--s-2) var(--s-2);
+  border-bottom: 1px solid var(--rule);
+  font-size: var(--step--1);
+}
+.ax-gate__n { color: var(--ink-faint); font-size: 11px; }
+.ax-gate__name { font-family: var(--font-figure); }
+.ax-gate__detail { color: var(--ink-soft); }
+
+/* A blocked gate is the system WORKING. Indigo, never alarm red. */
+.ax-gate.is-blocked {
+  background: var(--gate-wash);
+  box-shadow: inset 3px 0 0 var(--gate);
+}
+.ax-gate.is-blocked .ax-gate__mark { color: var(--gate); font-weight: 700; }
+.ax-gate.is-blocked .ax-gate__name { color: var(--gate); font-weight: 600; }
+
+.ax-gate.is-passed .ax-gate__mark { color: var(--tie); }
+.ax-gate.is-passed .ax-gate__name { color: var(--ink-soft); }
+
+.ax-gates__malformed {
+  padding: var(--s-4);
+  background: var(--break-wash);
+  color: var(--break);
+  border: 1px solid var(--break);
+  border-radius: var(--radius);
+  font-size: var(--step--1);
+}
+
+/* Simulator ---------------------------------------------------------- */
+
+.ax-sim__presets { margin-bottom: var(--s-4); }
+.ax-sim__presetrow { display: flex; flex-wrap: wrap; gap: var(--s-2); margin-top: var(--s-2); }
+.ax-sim__presetrow button { font-size: var(--step--1); }
+
+.ax-sim__body { display: grid; grid-template-columns: minmax(280px, 340px) 1fr; gap: var(--s-5); align-items: start; }
+
+.ax-sim__controls { padding: var(--s-4); display: grid; gap: var(--s-4); }
+.ax-sim__controls fieldset { border: 0; border-top: 1px solid var(--rule); margin: 0; padding: var(--s-3) 0 0; display: grid; gap: var(--s-3); }
+.ax-sim__controls fieldset:first-child { border-top: 0; padding-top: 0; }
+.ax-sim__controls legend { font-family: var(--font-figure); font-size: var(--step--1); text-transform: uppercase; letter-spacing: .1em; color: var(--ink-faint); padding: 0 var(--s-2) 0 0; }
+
+.ax-sim__controls label { display: grid; gap: var(--s-1); font-size: var(--step--1); color: var(--ink-soft); }
+.ax-sim__value { float: right; color: var(--ink); font-weight: 600; }
+.ax-sim__check { display: flex !important; flex-direction: row; align-items: center; gap: var(--s-2); }
+.ax-sim__controls input[type='range'] { width: 100%; accent-color: var(--gate); }
+
+.ax-verdict-card { padding: var(--s-4); margin-bottom: var(--s-4); border-left: 4px solid var(--rule-strong); }
+.ax-verdict-card.is-blocked { border-left-color: var(--gate); background: var(--gate-wash); }
+.ax-verdict-card.is-allowed { border-left-color: var(--tie); background: var(--tie-wash); }
+
+.ax-verdict-card__headline { font-family: var(--font-display); font-size: var(--step-2); margin: var(--s-1) 0 var(--s-2); }
+.ax-verdict-card.is-blocked .ax-verdict-card__headline { color: var(--gate); }
+.ax-verdict-card.is-allowed .ax-verdict-card__headline { color: var(--tie); }
+
+.ax-verdict-card__why { margin: 0; font-size: var(--step--1); color: var(--ink-soft); max-width: 68ch; }
+.ax-verdict-card__why code { font-family: var(--font-figure); font-weight: 600; }
+.ax-verdict-card__caveat { margin: var(--s-3) 0 0; font-size: 11px; color: var(--ink-faint); max-width: 62ch; }
+
+@media (max-width: 900px) {
+  .ax-sim__body { grid-template-columns: 1fr; }
+  .ax-gate { grid-template-columns: 22px 14px 1fr; }
+  .ax-gate__detail { grid-column: 1 / -1; padding-left: 40px; }
+}

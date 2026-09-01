@@ -1,0 +1,78 @@
+@import './tokens.css';
+
+*, *::before, *::after { box-sizing: border-box; }
+
+html, body, #root { height: 100%; }
+
+body {
+  margin: 0;
+  background: var(--paper);
+  color: var(--ink);
+  font-family: var(--font-body);
+  font-size: var(--step-0);
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* Every figure in this app is tabular. Digits must not shift width
+   between renders — a ledger column that jitters is unreadable. */
+.figure {
+  font-family: var(--font-figure);
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.01em;
+}
+
+h1, h2, h3 { font-family: var(--font-display); font-weight: 600; margin: 0; }
+h1 { font-size: var(--step-2); letter-spacing: -0.015em; }
+h2 { font-size: var(--step-1); }
+h3 { font-size: var(--step-0); }
+
+/* The eyebrow encodes WHICH document you're reading, not decoration. */
+.eyebrow {
+  font-family: var(--font-figure);
+  font-size: var(--step--1);
+  text-transform: uppercase;
+  letter-spacing: .14em;
+  color: var(--ink-faint);
+}
+
+button {
+  font: inherit;
+  color: inherit;
+  background: var(--paper-raised);
+  border: 1px solid var(--rule-strong);
+  border-radius: var(--radius);
+  padding: var(--s-2) var(--s-4);
+  cursor: pointer;
+  transition: background var(--transition), border-color var(--transition);
+}
+button:hover:not(:disabled) { background: var(--paper-sunk); }
+button:disabled { opacity: .45; cursor: not-allowed; }
+
+input, select {
+  font: inherit;
+  color: inherit;
+  background: var(--paper-raised);
+  border: 1px solid var(--rule-strong);
+  border-radius: var(--radius);
+  padding: var(--s-2) var(--s-3);
+}
+
+/* Keyboard focus is never removed — an ops console gets driven by keys. */
+:focus-visible {
+  outline: 2px solid var(--gate);
+  outline-offset: 2px;
+}
+
+.sheet {
+  background: var(--paper-raised);
+  border: 1px solid var(--rule);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow-sheet);
+}
+
+.sr-only {
+  position: absolute; width: 1px; height: 1px;
+  padding: 0; margin: -1px; overflow: hidden;
+  clip: rect(0,0,0,0); white-space: nowrap; border: 0;
+}

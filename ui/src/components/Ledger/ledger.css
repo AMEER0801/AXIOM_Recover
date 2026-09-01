@@ -1,0 +1,198 @@
+/* Tone mapping — used by gutter bars, verdict pills, decomposition */
+.tone-tie   { --tone: var(--tie);   --tone-wash: var(--tie-wash); }
+.tone-owed  { --tone: var(--owed);  --tone-wash: var(--owed-wash); }
+.tone-break { --tone: var(--break); --tone-wash: var(--break-wash); }
+.tone-gate  { --tone: var(--gate);  --tone-wash: var(--gate-wash); }
+.tone-all   { --tone: var(--ink-soft); --tone-wash: var(--paper-sunk); }
+
+/* Tie-out ------------------------------------------------------------ */
+
+.ax-tieout {
+  display: grid;
+  grid-template-columns: minmax(260px, 340px) 1fr;
+  gap: var(--s-6);
+  padding: var(--s-5);
+  margin-bottom: var(--s-5);
+}
+
+.ax-tieout__amount {
+  font-size: var(--step-4);
+  font-weight: 500;
+  line-height: 1.05;
+  margin-top: var(--s-2);
+}
+
+.ax-tieout__note {
+  margin: var(--s-3) 0 0;
+  font-size: var(--step--1);
+  color: var(--ink-soft);
+  max-width: 40ch;
+}
+
+.ax-decomp__bar {
+  display: flex;
+  height: 10px;
+  border: 1px solid var(--rule-strong);
+  border-radius: 2px;
+  overflow: hidden;
+  background: var(--paper-sunk);
+}
+.ax-decomp__seg { background: var(--tone); }
+
+.ax-decomp__legend {
+  list-style: none;
+  margin: var(--s-3) 0 0;
+  padding: 0;
+  display: grid;
+  gap: var(--s-2);
+}
+.ax-decomp__legend li {
+  display: grid;
+  grid-template-columns: 12px 1fr auto auto;
+  align-items: center;
+  gap: var(--s-3);
+  font-size: var(--step--1);
+  padding-bottom: var(--s-2);
+  border-bottom: 1px solid var(--rule);
+}
+.ax-swatch { width: 10px; height: 10px; background: var(--tone); border-radius: 2px; }
+.ax-decomp__value { font-weight: 600; }
+.ax-decomp__count { color: var(--ink-faint); min-width: 6ch; text-align: right; }
+
+.ax-scorecard {
+  display: flex;
+  gap: var(--s-6);
+  margin: var(--s-4) 0 0;
+  padding-top: var(--s-3);
+  border-top: 1px solid var(--rule);
+}
+.ax-scorecard dt { font-size: var(--step--1); color: var(--ink-faint); }
+.ax-scorecard dd { margin: 2px 0 0; font-size: var(--step-1); font-weight: 600; }
+.ax-scorecard__caveat {
+  margin: var(--s-2) 0 0;
+  font-size: var(--step--1);
+  color: var(--ink-faint);
+  max-width: 68ch;
+}
+
+/* Controls ----------------------------------------------------------- */
+
+.ax-ledger__controls {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--s-3);
+  align-items: center;
+  margin-bottom: var(--s-3);
+}
+.ax-ledger__controls input[type='search'] { min-width: 200px; }
+.ax-ledger__export { margin-left: auto; }
+
+.ax-segmented { display: flex; border: 1px solid var(--rule-strong); border-radius: var(--radius); overflow: hidden; }
+.ax-segmented__btn {
+  border: 0;
+  border-radius: 0;
+  border-right: 1px solid var(--rule);
+  background: var(--paper-raised);
+  font-size: var(--step--1);
+  padding: var(--s-2) var(--s-3);
+  display: flex; align-items: center; gap: var(--s-2);
+}
+.ax-segmented__btn:last-child { border-right: 0; }
+.ax-segmented__btn.is-active { background: var(--tone-wash); color: var(--tone); font-weight: 600; }
+.ax-segmented__n { color: var(--ink-faint); }
+.ax-segmented__btn.is-active .ax-segmented__n { color: inherit; }
+
+/* Table -------------------------------------------------------------- */
+
+.ax-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: var(--step--1);
+}
+.ax-table thead th {
+  text-align: left;
+  font-family: var(--font-figure);
+  font-weight: 500;
+  font-size: var(--step--1);
+  text-transform: uppercase;
+  letter-spacing: .08em;
+  color: var(--ink-faint);
+  padding: var(--s-2) var(--s-3);
+  border-bottom: 1px solid var(--rule-strong);
+  white-space: nowrap;
+}
+.ax-table th.num, .ax-table td.num { text-align: right; }
+.ax-table th.gutter-head { text-align: center; width: 180px; }
+
+.ax-table tbody tr {
+  border-bottom: 1px solid var(--rule);
+  cursor: pointer;
+  transition: background var(--transition);
+}
+.ax-table tbody tr:hover { background: var(--paper-sunk); }
+.ax-table tbody tr.is-open { background: var(--tone-wash); }
+.ax-table td { padding: var(--s-2) var(--s-3); vertical-align: middle; }
+.ax-table td.id { color: var(--ink-soft); white-space: nowrap; }
+
+.ax-pair {
+  margin-left: var(--s-2);
+  font-size: 11px;
+  padding: 1px 5px;
+  border-radius: 2px;
+  background: var(--break-wash);
+  color: var(--break);
+  border: 1px solid var(--break);
+}
+.ax-pair--original { opacity: .7; }
+
+.ax-verdict {
+  font-family: var(--font-figure);
+  font-size: 11px;
+  padding: 2px var(--s-2);
+  border-radius: 2px;
+  background: var(--tone-wash);
+  color: var(--tone);
+  white-space: nowrap;
+}
+.ax-toperson { color: var(--ink-soft); white-space: nowrap; }
+
+/* The gutter — signature element ------------------------------------- */
+
+.ax-gutter {
+  position: relative;
+  display: block;
+  height: 16px;
+  width: 100%;
+  min-width: 140px;
+}
+.ax-gutter__centre {
+  position: absolute;
+  left: 50%; top: 0; bottom: 0;
+  width: 1px;
+  background: var(--rule-strong);
+}
+.ax-gutter__bar {
+  position: absolute;
+  top: 4px; bottom: 4px;
+  background: var(--tone);
+  border-radius: 1px;
+  min-width: 2px;
+}
+.ax-gutter__bar.is-short { right: 50%; }
+.ax-gutter__bar.is-over  { left: 50%; }
+
+/* Row detail --------------------------------------------------------- */
+
+.ax-table__detail td { background: var(--paper-sunk); padding: var(--s-4) var(--s-3); }
+.ax-detail { display: grid; grid-template-columns: 1fr auto; gap: var(--s-5); align-items: start; }
+.ax-detail p { margin: var(--s-1) 0 0; max-width: 64ch; }
+.ax-detail__facts { display: flex; gap: var(--s-5); margin: 0; }
+.ax-detail__facts dt { font-size: var(--step--1); color: var(--ink-faint); }
+.ax-detail__facts dd { margin: 2px 0 0; font-weight: 600; }
+
+@media (max-width: 900px) {
+  .ax-tieout { grid-template-columns: 1fr; }
+  .ax-table th.gutter-head, .ax-table td.gutter { display: none; }
+  .ax-detail { grid-template-columns: 1fr; }
+  .ax-scorecard { flex-wrap: wrap; gap: var(--s-4); }
+}

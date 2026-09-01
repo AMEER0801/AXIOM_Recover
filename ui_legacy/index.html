@@ -1,0 +1,212 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>AXIOM RECOVER</title>
+<script>
+(function(){
+  var t = new URLSearchParams(location.search).get("theme") === "dark" ? "dark" : "light";
+  document.documentElement.setAttribute("data-theme", t);
+})();
+</script>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Archivo:wght@600;700&family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+/* ══════════════════════════════════════════════════════════════
+   AXIOM RECOVER · COVER
+
+   Not a landing page — a title page. Two consoles live behind
+   this one (ledger.html, recovery.html); this file is the cover
+   and contents page of the same bound ledger, not a separate
+   marketing surface in a different visual language. Same paper,
+   same ink, same rule.
+   ══════════════════════════════════════════════════════════════ */
+
+:root{
+  --paper:#E7EAEE; --sheet:#F6F8FA; --ink:#131822;
+  --ink-2:#5A6472; --ink-3:#8A93A0;
+  --rule:#C4CCD6; --rule-soft:#D8DEE5;
+  --tied:#0D6B58; --gate:#2B4C8A; --human:#8A6714;
+  --shadow:0 1px 2px #13182208, 0 20px 48px -20px #13182230;
+  --mono:"IBM Plex Mono",ui-monospace,Menlo,monospace;
+  --sans:"IBM Plex Sans",system-ui,-apple-system,sans-serif;
+  --disp:"Archivo","Archivo Narrow",var(--sans);
+}
+:root[data-theme="dark"]{
+  --paper:#15171B; --sheet:#1C1F24; --ink:#ECEEF1;
+  --ink-2:#9CA3AE; --ink-3:#6B7280;
+  --rule:#2D3138; --rule-soft:#262A30;
+  --tied:#3FB893; --gate:#7B9BE0; --human:#DDAB49;
+  --shadow:0 1px 2px #00000030, 0 24px 56px -20px #00000070;
+}
+
+*{box-sizing:border-box;margin:0;padding:0;transition:background-color .18s ease,border-color .18s ease,color .18s ease}
+html{color-scheme:light}
+html[data-theme="dark"]{color-scheme:dark}
+body{
+  min-height:100vh;background:var(--paper);color:var(--ink);
+  font:400 15px/1.6 var(--sans);
+  display:flex;align-items:center;justify-content:center;padding:40px 20px;
+  background-image:repeating-linear-gradient(180deg,transparent 0 31px,#00000006 31px 32px);
+}
+.lbl{font-family:var(--disp);font-weight:700;font-size:10px;letter-spacing:.14em;text-transform:uppercase;color:var(--ink-3)}
+.num{font-family:var(--mono);font-variant-numeric:tabular-nums}
+
+/* ── the book ─────────────────────────────────────────────────── */
+.book{
+  position:relative;max-width:680px;width:100%;
+  background:var(--sheet);border:1px solid var(--rule);box-shadow:var(--shadow);
+  padding:52px 48px 40px 64px;
+}
+/* the spine — a bound ledger's stitched edge, not decoration:
+   its tick spacing is deliberately irregular, the way real
+   hand-stitched signatures are, rather than a perfectly even
+   dashed border a CSS default would produce. */
+.spine{position:absolute;left:0;top:0;bottom:0;width:26px;border-right:1px solid var(--rule)}
+.spine i{position:absolute;left:9px;width:8px;height:2px;background:var(--rule-soft)}
+
+.cover-head{margin-bottom:6px}
+.cover-head .lbl{margin-bottom:14px}
+h1{font-family:var(--disp);font-weight:700;font-size:clamp(28px,5vw,40px);letter-spacing:-.01em;line-height:1.05}
+.thesis{margin-top:16px;font-size:15px;color:var(--ink-2);max-width:52ch;line-height:1.65}
+.thesis b{color:var(--ink);font-weight:600}
+
+.toc{margin-top:38px;border-top:1px solid var(--rule)}
+.chapter{
+  display:flex;gap:20px;align-items:flex-start;padding:22px 0;
+  border-bottom:1px solid var(--rule-soft);text-decoration:none;color:inherit;
+  opacity:0;transform:translateY(4px);animation:rise .4s ease-out forwards;
+}
+.chapter:nth-child(1){animation-delay:.05s}
+.chapter:nth-child(2){animation-delay:.15s}
+@keyframes rise{to{opacity:1;transform:none}}
+.chapter:hover .num-mark{color:var(--ink)}
+.chapter:hover .go{transform:translateX(3px)}
+
+.num-mark{
+  font-family:var(--disp);font-weight:700;font-size:22px;color:var(--ink-3);
+  flex:0 0 34px;line-height:1.3;
+}
+.chapter-body{flex:1}
+.chapter-title{font-family:var(--disp);font-weight:700;font-size:17px;letter-spacing:-.005em;display:flex;align-items:center;gap:10px}
+.dot{width:8px;height:8px;flex:none}
+.dot.tied{background:var(--tied)} .dot.gate{background:var(--gate)}
+.chapter-desc{margin-top:7px;font-size:13.5px;color:var(--ink-2);line-height:1.6;max-width:46ch}
+.go{
+  flex:0 0 auto;align-self:center;font-family:var(--mono);font-size:13px;color:var(--ink-3);
+  transition:transform .15s ease;
+}
+
+.colophon{
+  margin-top:32px;padding-top:20px;border-top:1px solid var(--rule);
+  display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:12px;
+  font-size:12px;color:var(--ink-3);
+}
+.colophon .facts{font-family:var(--mono);display:flex;gap:16px;flex-wrap:wrap}
+
+.theme-btn{
+  display:flex;align-items:center;gap:8px;
+  background:var(--paper);border:1px solid var(--rule);padding:6px 12px;
+  cursor:pointer;font:inherit;color:inherit;font-family:var(--disp);font-weight:700;font-size:11px;letter-spacing:.04em;
+}
+.theme-btn:hover{border-color:var(--ink-3)}
+.theme-btn[aria-pressed="true"]::before{content:"\263D  "}
+.theme-btn[aria-pressed="false"]::before{content:"\2600  "}
+
+@media (prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}.chapter{opacity:1;transform:none}}
+:focus-visible{outline:2px solid var(--ink);outline-offset:2px}
+
+@media (max-width:600px){
+  .book{padding:40px 24px 32px 40px}
+  .spine{width:18px}
+  .colophon{flex-direction:column;align-items:flex-start}
+}
+</style>
+</head>
+<body>
+
+<main class="book">
+  <div class="spine" id="spine"></div>
+
+  <div class="cover-head">
+    <div class="lbl">Razorpay AI Buildathon &middot; Track 3, with Track 4 built in</div>
+    <h1>AXIOM RECOVER</h1>
+    <p class="thesis">
+      One ledger, two proofs. <b>Reconciliation</b> shows every rupee tied out or explained.
+      <b>Recovery</b> shows an agent choosing, gated, what to do about the rest &mdash;
+      then hands what it recovers back to the same reconciler to confirm it actually landed.
+    </p>
+  </div>
+
+  <nav class="toc">
+    <a class="chapter" href="ledger.html">
+      <span class="num-mark">I.</span>
+      <span class="chapter-body">
+        <span class="chapter-title"><span class="dot tied"></span>Reconciliation</span>
+        <span class="chapter-desc">Every settlement matched, explained before it's flagged. 100% precision and recall, 98.2% explanation accuracy, measured across 25 independent batches &mdash; not one lucky run.</span>
+      </span>
+      <span class="go">open &rarr;</span>
+    </a>
+    <a class="chapter" href="recovery.html">
+      <span class="num-mark">II.</span>
+      <span class="chapter-body">
+        <span class="chapter-title"><span class="dot gate"></span>Recovery</span>
+        <span class="chapter-desc">An agent proposes an action, eleven gates decide what actually runs, and every recovered payment is verified by Chapter I's own reconciler &mdash; not by the agent's own say-so.</span>
+      </span>
+      <span class="go">open &rarr;</span>
+    </a>
+  </nav>
+
+  <div class="colophon">
+    <div class="facts">
+      <span>120 tests</span>
+      <span>zero dependencies</span>
+      <span>runs from a double-click</span>
+    </div>
+    <button class="theme-btn" id="theme-btn" type="button" aria-pressed="false">Day</button>
+  </div>
+</main>
+
+<script>
+/* Spine ticks — irregular spacing on purpose (hand-stitched
+   signatures aren't a perfect repeat), seeded so it's the same
+   irregular pattern on every load rather than shifting. */
+(function drawSpine(){
+  const host = document.getElementById("spine");
+  const h = host.getBoundingClientRect().height || 520;
+  let seed = 7, y = 18;
+  const rand = () => { seed = (seed * 1103515245 + 12345) & 0x7fffffff; return (seed / 0x7fffffff); };
+  while (y < h - 18) {
+    const tick = document.createElement("i");
+    tick.style.top = y + "px";
+    host.appendChild(tick);
+    y += 22 + rand() * 20;
+  }
+})();
+
+(function initThemeToggle(){
+  const btn = document.getElementById("theme-btn");
+  const paint = (t) => { btn.textContent = t === "dark" ? "Night" : "Day"; btn.setAttribute("aria-pressed", t === "dark"); };
+  const current = document.documentElement.getAttribute("data-theme") || "light";
+  paint(current);
+  btn.onclick = () => {
+    const next = document.documentElement.getAttribute("data-theme") === "dark" ? "light" : "dark";
+    document.documentElement.setAttribute("data-theme", next);
+    paint(next);
+    /* Carry the choice into whichever chapter is opened next, so
+       the reader doesn't have to re-toggle on the next page. */
+    document.querySelectorAll(".chapter").forEach((a) => {
+      const url = new URL(a.getAttribute("href"), location.href);
+      next === "dark" ? url.searchParams.set("theme", "dark") : url.searchParams.delete("theme");
+      a.setAttribute("href", url.pathname + url.search);
+    });
+    const url = new URL(location.href);
+    next === "dark" ? url.searchParams.set("theme", "dark") : url.searchParams.delete("theme");
+    history.replaceState(null, "", url);
+  };
+})();
+</script>
+</body>
+</html>

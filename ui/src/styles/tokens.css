@@ -1,0 +1,84 @@
+/* ============================================================
+   AXIOM RECOVER — DESIGN TOKENS
+   ------------------------------------------------------------
+   The metaphor is a bound settlement ledger, not a dashboard.
+   A reconciliation is a document: two columns that either tie
+   out or they don't. Every token below serves that reading.
+
+   Colour is semantic ONLY. Nothing here is decorative.
+     tie   — the row balances to the paisa
+     owed  — explained, but the merchant is still short
+     break — a person has to look at this
+     gate  — the system intervened on purpose (NOT a fault)
+   ============================================================ */
+
+:root {
+  /* --- Paper & ink (light: "Day Ledger") --------------------- */
+  --paper:        #F7F5EF;   /* ledger stock, slightly cool of cream */
+  --paper-raised: #FEFDFA;   /* the sheet on top of the stack */
+  --paper-sunk:   #EFEDE4;   /* ruled band / table zebra */
+  --ink:          #17191C;   /* primary type */
+  --ink-soft:     #55584F;   /* secondary type */
+  --ink-faint:    #8C8B80;   /* captions, units, disabled */
+  --rule:         #DCD8CB;   /* hairline rules */
+  --rule-strong:  #B9B4A4;   /* section dividers */
+
+  /* --- Semantic verdicts ------------------------------------ */
+  --tie:          #2F6B4F;   /* settled exactly */
+  --tie-wash:     #E3EDE6;
+  --owed:         #9A6B18;   /* explained, still owed */
+  --owed-wash:    #F3EBD8;
+  --break:        #A8322D;   /* genuine exception */
+  --break-wash:   #F4E2DF;
+  --gate:         #3B3A80;   /* deliberate intervention */
+  --gate-wash:    #E4E3F0;
+
+  /* --- Type ------------------------------------------------- */
+  --font-display: 'IBM Plex Serif', 'Iowan Old Style', Georgia, serif;
+  --font-body:    'IBM Plex Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  --font-figure:  'IBM Plex Mono', ui-monospace, 'SF Mono', Menlo, monospace;
+
+  --step--1: 0.8125rem;  /* 13px — captions, units */
+  --step-0:  0.9375rem;  /* 15px — body */
+  --step-1:  1.125rem;   /* 18px — subheads */
+  --step-2:  1.5rem;     /* 24px — section titles */
+  --step-3:  2.25rem;    /* 36px — tie-out figure */
+  --step-4:  3.25rem;    /* 52px — the one hero number */
+
+  /* --- Space (4pt grid) ------------------------------------- */
+  --s-1: 4px;  --s-2: 8px;  --s-3: 12px; --s-4: 16px;
+  --s-5: 24px; --s-6: 32px; --s-7: 48px; --s-8: 64px;
+
+  --radius: 3px;          /* paper does not have rounded corners */
+  --shadow-sheet: 0 1px 0 var(--rule), 0 12px 28px -20px rgba(23,25,28,.35);
+  --transition: 140ms cubic-bezier(.2,.7,.3,1);
+}
+
+/* --- Night Ledger ------------------------------------------
+   Same instrument, different light. Every hue keeps its family;
+   nothing is swapped for an unrelated neon.                    */
+[data-theme='night'] {
+  --paper:        #16171A;
+  --paper-raised: #1D1F23;
+  --paper-sunk:   #101113;
+  --ink:          #ECEAE2;
+  --ink-soft:     #A8A79C;
+  --ink-faint:    #6E6E66;
+  --rule:         #2E3036;
+  --rule-strong:  #43464E;
+
+  --tie:          #6FBE95;  --tie-wash:   #1B2C24;
+  --owed:         #D8A94A;  --owed-wash:  #2E2718;
+  --break:        #E2736C;  --break-wash: #2F1E1D;
+  --gate:         #8C8AD8;  --gate-wash:  #212040;
+
+  --shadow-sheet: 0 1px 0 var(--rule), 0 12px 28px -20px rgba(0,0,0,.8);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  :root { --transition: 0ms; }
+  *, *::before, *::after {
+    animation-duration: .01ms !important;
+    transition-duration: .01ms !important;
+  }
+}

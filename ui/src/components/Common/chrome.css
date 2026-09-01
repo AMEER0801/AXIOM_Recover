@@ -1,0 +1,126 @@
+/* Header ------------------------------------------------------------ */
+
+.ax-header {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--s-4);
+  align-items: flex-end;
+  justify-content: space-between;
+  padding: var(--s-6) var(--s-5) var(--s-4);
+  border-bottom: 2px solid var(--rule-strong);
+  background: var(--paper);
+}
+
+.ax-header h1 {
+  font-size: var(--step-3);
+  letter-spacing: -0.02em;
+  margin-top: var(--s-2);
+}
+
+/* The wordmark splits weight, not colour — AXIOM is the instrument,
+   Recover is what this particular arm of it does. */
+.ax-header__thin { font-weight: 400; color: var(--ink-soft); }
+
+.ax-header__sub {
+  margin: var(--s-2) 0 0;
+  max-width: 48ch;
+  color: var(--ink-soft);
+  font-size: var(--step-0);
+}
+
+.ax-header__meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--s-2);
+}
+
+/* Chips -------------------------------------------------------------- */
+
+.ax-chip {
+  font-family: var(--font-figure);
+  font-size: var(--step--1);
+  padding: 3px var(--s-2);
+  border-radius: var(--radius);
+  border: 1px solid transparent;
+  white-space: nowrap;
+}
+.ax-chip--tie   { background: var(--tie-wash);   color: var(--tie);   border-color: var(--tie); }
+.ax-chip--owed  { background: var(--owed-wash);  color: var(--owed);  border-color: var(--owed); }
+.ax-chip--break { background: var(--break-wash); color: var(--break); border-color: var(--break); }
+.ax-chip--gate  { background: var(--gate-wash);  color: var(--gate);  border-color: var(--gate); }
+.ax-chip--quiet { background: var(--paper-sunk); color: var(--ink-faint); border-color: var(--rule); }
+
+/* Tabs --------------------------------------------------------------- */
+
+.ax-tabs {
+  display: flex;
+  gap: 0;
+  overflow-x: auto;
+  border-bottom: 1px solid var(--rule);
+  background: var(--paper);
+  padding: 0 var(--s-5);
+}
+
+.ax-tab {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  background: none;
+  border: 0;
+  border-bottom: 2px solid transparent;
+  border-radius: 0;
+  padding: var(--s-3) var(--s-4);
+  min-width: max-content;
+  text-align: left;
+  color: var(--ink-soft);
+}
+.ax-tab:hover { background: var(--paper-sunk); }
+.ax-tab.is-active {
+  color: var(--ink);
+  border-bottom-color: var(--ink);
+  background: none;
+}
+.ax-tab__label { font-family: var(--font-display); font-size: var(--step-0); font-weight: 600; }
+.ax-tab__note  { font-size: var(--step--1); color: var(--ink-faint); }
+
+/* Sections ----------------------------------------------------------- */
+
+.ax-section { margin-bottom: var(--s-7); }
+
+.ax-section__head {
+  margin-bottom: var(--s-4);
+  padding-bottom: var(--s-2);
+  border-bottom: 1px solid var(--rule);
+}
+.ax-section__lede {
+  margin: var(--s-1) 0 0;
+  color: var(--ink-soft);
+  max-width: 72ch;
+  font-size: var(--step-0);
+}
+
+.ax-state {
+  padding: var(--s-7) var(--s-5);
+  text-align: center;
+  color: var(--ink-soft);
+}
+
+/* Layout ------------------------------------------------------------- */
+
+.ax-app { min-height: 100%; display: flex; flex-direction: column; }
+.ax-main {
+  flex: 1;
+  width: 100%;
+  max-width: 1240px;
+  margin: 0 auto;
+  padding: var(--s-6) var(--s-5) var(--s-8);
+}
+
+@media (max-width: 720px) {
+  .ax-header { padding: var(--s-4) var(--s-4) var(--s-3); }
+  .ax-header h1 { font-size: var(--step-2); }
+  .ax-tabs { padding: 0 var(--s-3); }
+  .ax-main { padding: var(--s-4) var(--s-3) var(--s-7); }
+}
