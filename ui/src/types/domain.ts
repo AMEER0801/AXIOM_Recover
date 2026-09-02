@@ -113,15 +113,18 @@ export interface GateCoverage {
 /* Recovery                                                            */
 /* ------------------------------------------------------------------ */
 
-export type PolicyName = 'baseline' | 'smart' | 'llm';
+export type PolicyName = 'baseline' | 'smart' | 'ev' | 'dp' | 'llm';
 
-/** The closed vocabulary. Anything outside it is coerced to NO_ACTION. */
+/** The closed vocabulary — exactly model/response-model.frozen.js's
+ *  INTERVENTIONS list, in the same order. Anything outside it is
+ *  coerced to NO_ACTION by the action-allowlist gate, never guessed
+ *  into the nearest valid action. */
 export type Intervention =
   | 'NO_ACTION'
   | 'RETRY_CHARGE'
-  | 'SEND_PAYMENT_LINK'
-  | 'SEND_NUDGE_SMS'
-  | 'SEND_NUDGE_WHATSAPP'
+  | 'PAYMENT_LINK_SMS'
+  | 'PAYMENT_LINK_WHATSAPP'
+  | 'DUNNING_EMAIL'
   | 'VOICE_NUDGE_REGIONAL'
   | 'ESCALATE_HUMAN'
   | 'WRITE_OFF';
@@ -183,6 +186,9 @@ export interface PolicyResult {
   /** Records that had not reached a terminal state when the window closed.
    *  Non-zero means the comparison is against a moving target. */
   stillInProgress: number;
+  /** gross_recovered / at-risk value, %. The metric the Track 3 bar is
+   *  measured on — money, not record count. Null when no at-risk value. */
+  value_recovery_pct?: number | null;
 }
 
 export interface RecoveryRun {
@@ -194,6 +200,16 @@ export interface RecoveryRun {
   coverage: GateCoverage[];
   /** sha256 head of the audit chain. Same seed ⇒ same hash. */
   audit_head: string;
+  /** Honest mode label — every number here is simulation against the
+   *  frozen response model, with dry-run execution. Never live money. */
+  mode?: string;
+  /** The gate-policy configuration this run used (attempt cap,
+   *  dual-control ceiling, contact sub-cap). */
+  config?: Record<string, number>;
+  /** Oracle ceiling for this exact configuration, % of at-risk value.
+   *  Computed by dynamic programming over the frozen model — the
+   *  provable maximum any policy could achieve. */
+  oracle_ceiling_pct?: number | null;
 }
 
 /* ------------------------------------------------------------------ */
@@ -213,23 +229,62 @@ export interface DeltaStat {
 
 export interface EvalSummary {
   batches: number;
-  /** Stable claim: smart recovers more PAYMENTS. */
+  /** Stable claim: the policy recovers more PAYMENTS. */
   countDelta: DeltaStat;
   /** Noisy claim: rupee total swings on a few large invoices. */
   rupeeDelta: DeltaStat;
+  /** The claim the Track 3 bar is measured on: value-recovery delta,
+   *  in percentage points, paired seed-by-seed. */
+  valueDelta?: DeltaStat;
+  /** Paired 95% bootstrap CI on the value-recovery delta (pp). */
+  valueDeltaCi?: { lo: number; hi: number };
+  /** Paired 95% bootstrap CI on the net-rupee delta. */
+  netDeltaCi?: { lo: number; hi: number };
+  /** Oracle ceiling at the run configuration, % value, mean ± sd. */
+  oracleCeilingPct?: { mean: number; sd: number };
+  /** Headline computed fields, server-side, for the hero panel. */
+  headline?: {
+    baselineValuePctMean: number;
+    finalValuePctMean: number;
+    finalCaptureOfCeilingPct: number;
+    finalWins: number;
+    seeds: number;
+  };
+  /** How the sweep was produced — seeds, warm-up, pairing, bootstrap. */
+  provenance?: {
+    seeds: number[];
+    warmupSeeds: number[];
+    records: number;
+    rounds: number;
+    warmup: number;
+    pairing: string;
+    bootstrap: string;
+    generatedAt: string;
+    regenerate: string;
+  };
+  config?: Record<string, number>;
+  arms?: string[];
 }
 
 /* ------------------------------------------------------------------ */
 /* Audit                                                               */
 /* ------------------------------------------------------------------ */
 
+export type AuditKind =
+  | 'run_started'
+  | 'decision'    /* a proposal met the gates — trace included   */
+  | 'execution'   /* an allowed action was actually carried out  */
+  | 'outcome'     /* what the action produced                    */
+  | 'state_change'/* opt-out, DNC flip, kill switch, etc.        */
+  | 'run_ended';
+
 export interface AuditEntry {
   seq: number;
   ts: string;
   prev_hash: string;
   hash: string;
-  kind: 'decision' | 'execution' | 'result';
-  entity_id: string;
+  kind: AuditKind;
+  entity_id: string | null;
   payload: Record<string, unknown>;
 }
 

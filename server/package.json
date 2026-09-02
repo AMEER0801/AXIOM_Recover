@@ -19,12 +19,24 @@
     "ui": "node ../ui/build-ui.js --seed 42 --records 200 --sweep 25",
     "gates:demo": "node gates.js --demo",
     "recover": "node recover.js --seed 42 --records 200 --rounds 8",
+    "recover2": "node recover2.js --seed 42 --records 200 --rounds 8 --warmup 12",
+    "recover2:cold": "node recover2.js --seed 42 --records 200 --rounds 8 --warmup 0",
+    "eval2": "node eval2.js --seeds 20 --warmup 8",
+    "churn": "node churn-sweep.js",
     "eval": "node eval.js --seeds 20 --records 200 --rounds 8",
     "recon:recovered": "node recon.js --data ./data/recover",
     "ui:recovery": "node ../ui/build-recovery.js --seed 42 --records 200 --rounds 8",
+    "ui:recovery2": "node ../ui/build-recovery2.js --seed 42 --records 200 --rounds 8",
+    "ui:recovery2:quick": "node ../ui/build-recovery2.js --quick",
     "recover:llm": "node recover.js --seed 42 --records 200 --llm",
     "discrepancy": "node discrepancy.js --data ./data",
-    "export-live": "node export-live-ledger.js --data ./data"
+    "export-live": "node export-live-ledger.js --data ./data",
+    "recover3": "node recover3.js --seed 42 --records 200 --rounds 8 --warmup 12",
+    "oracle": "node oracle-ceiling.js --seed 42 --records 200",
+    "approval-sweep": "node approval-rate-sweep.js --seed 42 --records 200 --rounds 8",
+    "recover-final": "node recover-final.js --seed 42 --records 200 --rounds 20 --warmup 8",
+    "console": "node console-api.js",
+    "eval:console": "node console-eval.js --seeds 20"
   },
   "dependencies": {}
 }

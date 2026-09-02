@@ -1,0 +1,75 @@
+{
+  "_README": "THE AGENT'S BELIEFS — NOT THE WORLD'S TRUTH. base-rates.json is what actually happens to a customer; this file is what the agent *thinks* happens before it has seen any evidence. The two must never be the same file and should not be the same numbers. If the policy read base-rates.json to pick its action, it would be argmaxing against its own answer key and every reported lift would be an artifact of that peek. These priors come from published vendor benchmarks a real merchant could read on day one; they are wrong in places, on purpose, and the bandit in bandit.js is expected to correct them from observed outcomes during the run.",
+  "_units": "Probabilities 0..1. Money in integer paise. `strength` is the beta prior's pseudo-count — how many observations this belief is worth before real data overrides it.",
+
+  "prior_strength": {
+    "value": 12,
+    "note": "Deliberately weak. 12 pseudo-observations means ~12 real outcomes are enough to move an arm substantially, which is the right sensitivity for a 120-record batch. Set this high and the bandit never learns; set it near zero and it chases noise in the first three draws."
+  },
+
+  "channel_conversion_prior": {
+    "_note": "P(customer pays | this channel reached them). Merchant-side belief from public dunning benchmarks. Notably NOT split by failure reason — a real merchant starting out does not have that breakdown, and discovering it is the bandit's job.",
+    "RETRY_CHARGE":          { "value": 0.20, "source": "Recurly 2025: retry-only schedules recover ~58% cumulatively over 4 attempts, implying a first-attempt rate near 0.2. Public, merchant-readable." },
+    "PAYMENT_LINK_WHATSAPP": { "value": 0.19, "source": "Meta/Gupshup India commerce case studies, 2025-26: WhatsApp payment-link CTR far exceeds SMS. Agent's prior is optimistic vs the frozen model's 0.16 — an honest merchant overestimate." },
+    "VOICE_NUDGE_REGIONAL":  { "value": 0.17, "source": "IVR collections vendor claims, India, 2026. Agent UNDERestimates here (frozen truth is 0.21) — the bandit should discover voice is better than believed." },
+    "PAYMENT_LINK_SMS":      { "value": 0.11, "source": "India A2P SMS conversion benchmarks, 2026." },
+    "DUNNING_EMAIL":         { "value": 0.05, "source": "Standard email dunning open/convert rates, 2025." }
+  },
+
+  "retry_timing_prior": {
+    "_note": "TESTED, NOT ADOPTED AS A NET WIN — kept for the record and for anyone who wants to dig further, defaulted to neutral (1.0) below. The hypothesis was sound and directly cites Stripe's own published Smart Retries claim (10-15% uplift from optimal timing). A paired A/B across 15 seeds, identical warm-up, identical attempt cap, ONLY this belief toggled, found NO net effect: mean -1.40pp, 95% CI [-4.63, +0.40] — crosses zero. One seed (49) swung -22.8pp on a single ₹4.94L invoice, traced to a real mechanism, not a bug: this project's bandit is a SINGLE shared, mutating instance across a whole run, so a changed decision on one record changes the bandit's belief for every OTHER record sharing that (class, channel) arm processed afterward in the same run. A well-reasoned, correctly-implemented signal can still cascade into a worse outcome for an unrelated record purely through this path-dependence — and an equally-sized cascade can just as easily land better. Averaged across seeds this washes out to noise, not a real bias either direction. Values below are left in place, at neutral, so re-enabling this for further research is a one-line change, not a rebuild.",
+    "immediate_lt_24h":  { "value": 1.00, "source": "Neutral — see _note. Directional hypothesis was 0.75 (Stripe Smart Retries); did not survive a controlled A/B, defaulted off pending a redesign that avoids single-shared-bandit cascade sensitivity (e.g. batching updates, or isolating this signal from the shared arms)." },
+    "sweet_spot_3_7d":    { "value": 1.00, "source": "Neutral — see _note. Directional hypothesis was 1.15." },
+    "late_gt_10d":        { "value": 1.00, "source": "Neutral — see _note. Directional hypothesis was 0.80." },
+    "default":            { "value": 1.00, "source": "Unaffected either way." }
+  },
+
+  "opt_out_prior": {
+    "_note": "P(this contact pushes the customer onto do-not-contact). Cheap to underestimate and expensive to be wrong about, so the agent is deliberately pessimistic relative to the frozen model.",
+    "PAYMENT_LINK_WHATSAPP": { "value": 0.022, "source": "WhatsApp block-rate reporting, Meta Business, 2026." },
+    "VOICE_NUDGE_REGIONAL":  { "value": 0.040, "source": "Voice is the most intrusive channel; treated as the highest churn risk." },
+    "PAYMENT_LINK_SMS":      { "value": 0.014, "source": "DLT-registered SMS opt-out benchmarks, India, 2026." },
+    "DUNNING_EMAIL":         { "value": 0.007, "source": "Email unsubscribe benchmarks, 2025." },
+    "RETRY_CHARGE":          { "value": 0.0,   "source": "A silent retry sends the customer nothing, so it cannot trigger an opt-out. Structural, not estimated." },
+    "fatigue_multiplier":    { "value": 1.7,   "source": "Each additional contact to the same customer raises opt-out risk. Agent assumes slightly worse fatigue (1.7) than the frozen model applies (1.6) — erring toward restraint." }
+  },
+
+  "credential_viability": {
+    "_note": "P(a CHARGE against the stored credential can physically succeed). This is about the instrument, not the customer. It multiplies RETRY_CHARGE only — never a contact channel. Separating these two is the correction described in FINDINGS.md #4: a dead card explains why a retry fails, it does not explain why a person asked to update that card declines to.",
+    "card_expired":               { "value": 0.02, "source": "An expired card cannot authorise. Near-zero by definition; not zero because some issuers honour account-updater refreshes." },
+    "card_blocked":               { "value": 0.02, "source": "Blocked instrument cannot authorise." },
+    "invalid_account":            { "value": 0.00, "source": "No account to debit. Structural zero." },
+    "mandate_revoked":            { "value": 0.00, "source": "NPCI e-mandate: a revoked mandate has no live authorisation. Structural zero, and gates.js enforces it independently." },
+    "mandate_paused_by_customer": { "value": 0.00, "source": "Paused mandate cannot be debited until resumed." },
+    "mandate_paused_by_business": { "value": 0.00, "source": "Merchant-side block; the instrument is fine but the debit is suppressed." },
+    "insufficient_funds":         { "value": 0.85, "source": "Instrument is live; the balance is the constraint, and balances move." },
+    "authentication_failed":      { "value": 0.75, "source": "Instrument is live; the auth step failed." },
+    "gateway_error":              { "value": 0.95, "source": "Instrument is fine; infrastructure failed." },
+    "issuer_down":                { "value": 0.95, "source": "Instrument is fine; issuer was unavailable." },
+    "payment_timeout":            { "value": 0.95, "source": "Instrument is fine; the transaction timed out." },
+    "_default":                   { "value": 0.80, "source": "Unclassified failure or a non-failure at-risk record (invoice_overdue, checkout_abandoned): assume the instrument is probably usable." }
+  },
+
+  "willingness": {
+    "_note": "P-multiplier on a CONTACT channel: how likely the customer is to act once reached. This is about the person, not the instrument. A customer whose card expired is arguably MORE responsive to a one-click update link than one who is simply out of money — the obstacle is thirty seconds of effort rather than an empty account.",
+    "card_expired":               { "value": 1.15, "source": "Obstacle is a trivial credential update, not a money problem. Agent belief; the bandit will test it." },
+    "card_blocked":               { "value": 1.05, "source": "As above, with a slower remedy (issuer contact)." },
+    "invalid_account":            { "value": 0.60, "source": "Customer may have closed the account deliberately." },
+    "mandate_revoked":            { "value": 0.70, "source": "Revocation signals intent to stop, but a one-time link is a different ask from a standing debit." },
+    "mandate_paused_by_customer": { "value": 1.10, "source": "A pause is not a cancellation; a resume link is a low-friction ask." },
+    "mandate_paused_by_business": { "value": 0.00, "source": "Structural zero: the block is on the merchant's side and no customer action clears it. Contacting is pure waste." },
+    "insufficient_funds":         { "value": 0.90, "source": "Willing but constrained; timing matters more than persuasion." },
+    "authentication_failed":      { "value": 1.00, "source": "No signal either way." },
+    "gateway_error":              { "value": 1.05, "source": "Failure was not the customer's fault; goodwill is intact." },
+    "issuer_down":                { "value": 1.05, "source": "As above." },
+    "payment_timeout":            { "value": 1.05, "source": "As above." },
+    "_default":                   { "value": 1.00, "source": "No adjustment." }
+  },
+
+  "approval_workflow": {
+    "_note": "Dual control is an operating procedure, not a fact about customers — so it lives here in the agent's configuration and NOT in base-rates.json. Changing these numbers changes how the business runs; it does not change how customers behave.",
+    "approval_rate":        { "value": 0.85, "source": "Share of ceiling-triggered reviews a human approves. Assumption: reviewers approve most legitimate collection attempts and reject a minority (disputed invoices, known-bad accounts). Reported as an assumption, swept in sweep.js." },
+    "approval_latency_rounds": { "value": 1, "source": "One collection round (~30h) for a queued review to come back. Conservative for a staffed desk." },
+    "review_cost_paise":    { "value": 7000, "source": "6 minutes at the ₹700/hr agent cost already cited in base-rates.json — kept numerically identical so the two files cannot drift." }
+  }
+}

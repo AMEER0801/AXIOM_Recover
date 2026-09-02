@@ -70,3 +70,12 @@
   .ax-gate { grid-template-columns: 22px 14px 1fr; }
   .ax-gate__detail { grid-column: 1 / -1; padding-left: 40px; }
 }
+
+/* The "gates rewrote the proposal" line — rewrite, not reject. */
+.ax-verdict-card__rewrite {
+  margin-top: 0.5rem;
+  padding-top: 0.5rem;
+  border-top: 1px dashed var(--rule);
+  font-size: 0.9rem;
+  color: var(--ink);
+}

@@ -1,42 +1,54 @@
 /* ============================================================
    AXIOM RECOVER — DESIGN TOKENS
    ------------------------------------------------------------
-   The metaphor is a bound settlement ledger, not a dashboard.
-   A reconciliation is a document: two columns that either tie
-   out or they don't. Every token below serves that reading.
+   The console wears Razorpay's own design language, on purpose:
+   Track 3 is a Razorpay product surface, so the operator console
+   should look like one. The palette below is lifted from
+   Razorpay's product family, not invented:
 
-   Colour is semantic ONLY. Nothing here is decorative.
+     navy   #02042B   Razorpay's brand ink — sidebar + headings
+     blue   #528FF0   Razorpay dashboard blue — primary accent
+     mint   #00E5A0   success, only ever as a positive verdict
+
+   Colour stays semantic. Nothing is decorative:
      tie   — the row balances to the paisa
      owed  — explained, but the merchant is still short
      break — a person has to look at this
      gate  — the system intervened on purpose (NOT a fault)
+
+   Same variable NAMES as the original ledger theme, so every
+   component restyles without touching its markup.
    ============================================================ */
 
 :root {
-  /* --- Paper & ink (light: "Day Ledger") --------------------- */
-  --paper:        #F7F5EF;   /* ledger stock, slightly cool of cream */
-  --paper-raised: #FEFDFA;   /* the sheet on top of the stack */
-  --paper-sunk:   #EFEDE4;   /* ruled band / table zebra */
-  --ink:          #17191C;   /* primary type */
-  --ink-soft:     #55584F;   /* secondary type */
-  --ink-faint:    #8C8B80;   /* captions, units, disabled */
-  --rule:         #DCD8CB;   /* hairline rules */
-  --rule-strong:  #B9B4A4;   /* section dividers */
+  /* --- Surface (light: Razorpay console white) ---------------- */
+  --paper:        #F5F6F8;   /* console background */
+  --paper-raised: #FFFFFF;   /* cards, sheets, top bar */
+  --paper-sunk:   #EBEFF5;   /* table zebra, input fills */
 
-  /* --- Semantic verdicts ------------------------------------ */
-  --tie:          #2F6B4F;   /* settled exactly */
-  --tie-wash:     #E3EDE6;
-  --owed:         #9A6B18;   /* explained, still owed */
-  --owed-wash:    #F3EBD8;
-  --break:        #A8322D;   /* genuine exception */
-  --break-wash:   #F4E2DF;
-  --gate:         #3B3A80;   /* deliberate intervention */
-  --gate-wash:    #E4E3F0;
+  --ink:          #02042B;   /* Razorpay navy — primary type */
+  --ink-soft:     #5F6483;   /* secondary type */
+  --ink-faint:    #8B90A8;   /* captions, units, disabled */
 
-  /* --- Type ------------------------------------------------- */
-  --font-display: 'IBM Plex Serif', 'Iowan Old Style', Georgia, serif;
-  --font-body:    'IBM Plex Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
-  --font-figure:  'IBM Plex Mono', ui-monospace, 'SF Mono', Menlo, monospace;
+  --rule:         #E3E6EF;   /* hairline rules */
+  --rule-strong:  #C9CEDC;   /* input borders, dividers */
+
+  /* --- Brand (new tokens, used by the shell) ------------------- */
+  --brand:        #528FF0;   /* Razorpay dashboard blue */
+  --brand-deep:   #3B6FD4;   /* hover / pressed */
+  --brand-navy:   #02042B;   /* the sidebar, always navy */
+  --brand-mint:   #00C77F;   /* live-status green */
+
+  /* --- Semantic verdicts ---------------------------------------- */
+  --tie:          #0E9F6E;   --tie-wash:   #E4F5EE;
+  --owed:         #B7791F;   --owed-wash:  #FCF1DC;
+  --break:        #E5484D;   --break-wash: #FDECEC;
+  --gate:         #528FF0;   --gate-wash:  #E9F0FD;
+
+  /* --- Type ------------------------------------------------------ */
+  --font-display: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  --font-body:    'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  --font-figure:  ui-monospace, 'SF Mono', 'Cascadia Mono', 'Roboto Mono', Menlo, monospace;
 
   --step--1: 0.8125rem;  /* 13px — captions, units */
   --step-0:  0.9375rem;  /* 15px — body */
@@ -45,34 +57,42 @@
   --step-3:  2.25rem;    /* 36px — tie-out figure */
   --step-4:  3.25rem;    /* 52px — the one hero number */
 
-  /* --- Space (4pt grid) ------------------------------------- */
+  /* --- Space (4pt grid) ----------------------------------------- */
   --s-1: 4px;  --s-2: 8px;  --s-3: 12px; --s-4: 16px;
   --s-5: 24px; --s-6: 32px; --s-7: 48px; --s-8: 64px;
 
-  --radius: 3px;          /* paper does not have rounded corners */
-  --shadow-sheet: 0 1px 0 var(--rule), 0 12px 28px -20px rgba(23,25,28,.35);
+  --radius: 8px;           /* Razorpay cards are softly rounded */
+  --radius-sm: 6px;
+  --shadow-sheet: 0 1px 2px rgba(2,4,43,.05), 0 8px 24px -12px rgba(2,4,43,.14);
+  --shadow-pop:   0 4px 8px rgba(2,4,43,.08), 0 16px 40px -16px rgba(2,4,43,.24);
   --transition: 140ms cubic-bezier(.2,.7,.3,1);
 }
 
-/* --- Night Ledger ------------------------------------------
-   Same instrument, different light. Every hue keeps its family;
-   nothing is swapped for an unrelated neon.                    */
+/* --- Night console ------------------------------------------------
+   Same instrument, different light — Razorpay's dark surfaces.
+   The sidebar stays brand-navy in both themes.                     */
 [data-theme='night'] {
-  --paper:        #16171A;
-  --paper-raised: #1D1F23;
-  --paper-sunk:   #101113;
-  --ink:          #ECEAE2;
-  --ink-soft:     #A8A79C;
-  --ink-faint:    #6E6E66;
-  --rule:         #2E3036;
-  --rule-strong:  #43464E;
+  --paper:        #0C0F22;
+  --paper-raised: #131734;
+  --paper-sunk:   #080A1A;
+  --ink:          #E8EAF6;
+  --ink-soft:     #A9AFCE;
+  --ink-faint:    #6E7493;
+  --rule:         #262C4A;
+  --rule-strong:  #3A4166;
 
-  --tie:          #6FBE95;  --tie-wash:   #1B2C24;
-  --owed:         #D8A94A;  --owed-wash:  #2E2718;
-  --break:        #E2736C;  --break-wash: #2F1E1D;
-  --gate:         #8C8AD8;  --gate-wash:  #212040;
+  --brand:        #6FA1F7;
+  --brand-deep:   #528FF0;
+  --brand-navy:   #070A1F;
+  --brand-mint:   #00E5A0;
 
-  --shadow-sheet: 0 1px 0 var(--rule), 0 12px 28px -20px rgba(0,0,0,.8);
+  --tie:          #4ED5A2;  --tie-wash:   #0F2A20;
+  --owed:         #E8B34B;  --owed-wash:  #2E2513;
+  --break:        #F27D82;  --break-wash:  #31191D;
+  --gate:         #6FA1F7;  --gate-wash:  #16244A;
+
+  --shadow-sheet: 0 1px 2px rgba(0,0,0,.4), 0 12px 28px -16px rgba(0,0,0,.7);
+  --shadow-pop:   0 4px 8px rgba(0,0,0,.5), 0 16px 40px -12px rgba(0,0,0,.8);
 }
 
 @media (prefers-reduced-motion: reduce) {

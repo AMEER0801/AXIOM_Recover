@@ -104,6 +104,17 @@ export interface GateProbe {
   approval_ceiling_paise: number;
 }
 
+/** The full verdict from the real gates.js — not just the trace. */
+export interface GateVerdict {
+  trace: GateTrace;
+  allowed: boolean;
+  /** What actually runs: the gates may rewrite the proposal
+   *  (DNC → ESCALATE_HUMAN, quiet hours → NO_ACTION). */
+  finalAction: Intervention;
+  estimatedCostPaise: number;
+  idempotencyKey: string | null;
+}
+
 /**
  * Server-side gate evaluation.
  *
@@ -112,13 +123,115 @@ export interface GateProbe {
  * teaching aid for the reviewer, not a second source of truth — the badge
  * on the panel says which one produced the verdict.
  */
-export const evaluateGates = (probe: GateProbe, localFallback: GateTrace) =>
-  post<GateTrace, GateProbe>('/gates/evaluate', probe, localFallback);
+export const evaluateGates = (probe: GateProbe, localFallback: GateVerdict) =>
+  post<GateVerdict, GateProbe>('/gates/evaluate', probe, localFallback);
 
 /* ---------------- Audit ---------------- */
 
-export const fetchAudit = (limit = 200) =>
+export const fetchAudit = (limit = 2000) =>
   get<{ entries: AuditEntry[]; verification: ChainVerification }>(
     `/audit?limit=${limit}`,
     { entries: fixtures.auditEntries, verification: fixtures.chainVerification },
+  );
+
+/* ---------------- Live providers (Razorpay Test Mode + Groq) ------- */
+
+export interface ProviderInfo {
+  configured: boolean;
+  detail?: string;
+  mode?: string;
+  model?: string;
+}
+
+export interface ProvidersPayload {
+  providers: {
+    razorpay: ProviderInfo;
+    groq: ProviderInfo;
+  };
+}
+
+export const fetchProviders = () =>
+  get<ProvidersPayload>('/providers', {
+    providers: {
+      razorpay: { configured: false, detail: 'provider status unavailable — backend not running' },
+      groq: { configured: false, detail: 'provider status unavailable — backend not running' },
+    },
+  });
+
+export interface DiagnoseInput {
+  entity_id?: string;
+  failure_reason: string;
+  amount_paise: number;
+  attempts: number;
+  minutes_since_last_attempt: number;
+  locale: string;
+  dnc: boolean;
+  hour_ist: number;
+  kill_switch?: boolean;
+  approval_ceiling_paise?: number;
+}
+
+export interface LlmVerdict {
+  action: string;
+  valid: boolean;
+  model: string;
+  latencyMs: number;
+  promptTokens: number;
+  completionTokens: number;
+  degraded: string | null;
+  raw?: string;
+  advisory: true;
+  agreesWithPolicy: boolean;
+}
+
+export interface DiagnoseVerdict {
+  input: DiagnoseInput;
+  policy: { proposed: string; authoritative: true };
+  gates: {
+    allowed: boolean;
+    finalAction: string;
+    estimatedCostPaise: number;
+    trace: GateTrace;
+  };
+  llm: LlmVerdict | null;
+  llmError: string | null;
+  note: string;
+}
+
+export const runDiagnosis = (input: DiagnoseInput) =>
+  post<DiagnoseVerdict, DiagnoseInput>('/llm/diagnose', input, {
+    input,
+    policy: { proposed: 'NO_ACTION', authoritative: true },
+    gates: { allowed: false, finalAction: 'NO_ACTION', estimatedCostPaise: 0, trace: [] },
+    llm: null,
+    llmError: 'diagnosis unavailable — backend not running',
+    note: 'fixture fallback',
+  });
+
+export interface LinkResult {
+  ok: boolean;
+  simulated: boolean;
+  replayed: boolean;
+  mode: string;
+  link: { id: string; short_url: string; status: string; amount: number } | null;
+  error: unknown;
+  idempotency: string;
+  note: string;
+}
+
+export const createTestLink = (body: { amount_paise: number; entity_id: string; attempt: number }) =>
+  post<LinkResult, typeof body>('/rzp/link', body, {
+    ok: false,
+    simulated: false,
+    replayed: false,
+    mode: 'offline',
+    link: null,
+    error: null,
+    idempotency: '',
+    note: 'link creation unavailable — backend not running',
+  });
+
+export const pingRazorpay = () =>
+  post<{ ok: boolean; simulated: boolean; mode: string; note: string; error: unknown }, Record<string, never>>(
+    '/rzp/ping', {}, { ok: false, simulated: false, mode: 'offline', note: 'ping unavailable', error: null },
   );

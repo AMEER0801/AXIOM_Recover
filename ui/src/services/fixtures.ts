@@ -131,9 +131,9 @@ function buildRecord(i: number): RecoveryRecord {
     if (reason === 'mandate_paused_by_business') {
       proposed = 'ESCALATE_HUMAN'; outcome = 'escalated';
     } else if (roll < 0.30 && r >= 2) {
-      proposed = 'SEND_NUDGE_WHATSAPP'; outcome = 'paid'; cost = 20;
+      proposed = 'PAYMENT_LINK_WHATSAPP'; outcome = 'paid'; cost = 20;
     } else if (roll < 0.48) {
-      proposed = 'SEND_NUDGE_SMS'; outcome = 'gated'; blockedBy = 'quiet_hours'; cost = 0;
+      proposed = 'PAYMENT_LINK_SMS'; outcome = 'gated'; blockedBy = 'quiet_hours'; cost = 0;
     } else if (roll < 0.60) {
       proposed = 'RETRY_CHARGE'; outcome = 'gated'; blockedBy = 'cooldown';
     } else if (roll < 0.72 && r >= 3) {
@@ -178,20 +178,21 @@ const recoveryRun: RecoveryRun = {
     {
       policy: 'baseline', records_total: 120, records_recovered: 30,
       gross_recovered: 37_21_200, direct_cost: 0, optout_loss: 0,
-      net_recovered: 37_21_200, stillInProgress: 0,
+      net_recovered: 37_21_200, stillInProgress: 0, value_recovery_pct: 27.5,
     },
     {
       policy: 'smart', records_total: 120, records_recovered: 42,
       gross_recovered: 52_10_500, direct_cost: 13_700, optout_loss: 48_000,
-      net_recovered: 51_48_800, stillInProgress: 0,
+      net_recovered: 51_48_800, stillInProgress: 0, value_recovery_pct: 23.5,
     },
     {
-      policy: 'llm', records_total: 120, records_recovered: 38,
-      gross_recovered: 48_90_300, direct_cost: 19_400, optout_loss: 96_000,
-      net_recovered: 47_74_900, stillInProgress: 0,
+      policy: 'ev', records_total: 120, records_recovered: 55,
+      gross_recovered: 89_50_300, direct_cost: 19_400, optout_loss: 96_000,
+      net_recovered: 88_34_900, stillInProgress: 0, value_recovery_pct: 52.0,
     },
   ],
   records,
+  mode: 'FIXTURE · offline copy of a real run',
   coverage: [
     { gate: 'kill_switch', fired: 0, silentReason: 'by-design', silentDetail: 'Only fires when a human engages it.' },
     { gate: 'action_allowlist', fired: 0, silentReason: 'by-design', silentDetail: 'Both shipped policies emit valid actions only.' },
@@ -206,12 +207,35 @@ const recoveryRun: RecoveryRun = {
     { gate: 'spend_cap_day', fired: 0, silentReason: 'scenario', silentDetail: 'Same.' },
   ],
   audit_head: 'a91f4c2e7b6d80153fae94c1b2d7e880f3a6c5194e2b7d0c8a51f39b6e4d2c70',
+  oracle_ceiling_pct: 71.8,
 };
 
 const evalSummary: EvalSummary = {
   batches: 20,
   countDelta: { mean: 10.1, sd: 5.6, cv: 55.0, min: 0, max: 18, wins: 19, batches: 20 },
   rupeeDelta: { mean: 3865.16, sd: 11789.30, cv: 305.0, min: -22442.44, max: 24048.32, wins: 13, batches: 20 },
+  valueDelta: { mean: 30.2, sd: 8.1, cv: 26.8, min: 12.4, max: 44.9, wins: 20, batches: 20 },
+  valueDeltaCi: { lo: 23.3, hi: 37.6 },
+  netDeltaCi: { lo: 351530, hi: 630191 },
+  oracleCeilingPct: { mean: 71.5, sd: 2.1 },
+  headline: {
+    baselineValuePctMean: 28.7,
+    finalValuePctMean: 58.9,
+    finalCaptureOfCeilingPct: 82.4,
+    finalWins: 20,
+    seeds: 20,
+  },
+  provenance: {
+    seeds: [42, 49, 56, 63, 70, 77, 84, 91, 98, 105, 112, 119, 126, 133, 140, 147, 154, 161, 168, 175],
+    warmupSeeds: [90001, 90002, 90003, 90004, 90005, 90006, 90007, 90008],
+    records: 200,
+    rounds: 20,
+    warmup: 8,
+    pairing: 'each seed runs every arm on the identical population',
+    bootstrap: 'paired, deterministic (rngFor), 4000 iterations',
+    generatedAt: '2026-09-02T03:30:00.000Z',
+    regenerate: 'npm run eval:console',
+  },
 };
 
 /* ------------------------- Audit ------------------------- */
@@ -221,7 +245,7 @@ const auditEntries: AuditEntry[] = Array.from({ length: 40 }, (_, i) => ({
   ts: new Date(Date.UTC(2026, 7, 22, 9, i * 3)).toISOString(),
   prev_hash: i === 0 ? '0'.repeat(64) : `h${(i - 1).toString(16).padStart(63, '0')}`,
   hash: `h${i.toString(16).padStart(63, '0')}`,
-  kind: i % 3 === 0 ? 'decision' : i % 3 === 1 ? 'execution' : 'result',
+  kind: i % 4 === 0 ? 'decision' : i % 4 === 1 ? 'execution' : i % 4 === 2 ? 'outcome' : 'state_change',
   entity_id: records[i % records.length].id,
   payload: { action: 'RETRY_CHARGE', amount_paise: between(20_000, 500_000) },
 }));

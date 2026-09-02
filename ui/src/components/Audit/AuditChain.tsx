@@ -14,11 +14,17 @@ import './audit.css';
  * quiet overstatement this project exists to avoid.
  */
 
+/* Tone by kind — the engine's closed set, not an invented one. */
 const KIND_TONE: Record<AuditEntry['kind'], string> = {
+  run_started: 'neutral',
   decision: 'gate',
   execution: 'owed',
-  result: 'tie',
+  outcome: 'tie',
+  state_change: 'break',
+  run_ended: 'neutral',
 };
+
+const FILTER_KINDS = ['all', 'decision', 'execution', 'outcome', 'state_change'] as const;
 
 export function AuditChain({
   entries,
@@ -44,8 +50,8 @@ export function AuditChain({
     const seen = new Set<string>();
     const orphans: number[] = [];
     for (const e of entries) {
-      if (e.kind === 'decision') seen.add(e.entity_id);
-      if (e.kind === 'execution' && !seen.has(e.entity_id)) orphans.push(e.seq);
+      if (e.kind === 'decision' && e.entity_id) seen.add(e.entity_id);
+      if (e.kind === 'execution' && (!e.entity_id || !seen.has(e.entity_id))) orphans.push(e.seq);
     }
     return orphans;
   }, [entries]);
@@ -96,14 +102,14 @@ export function AuditChain({
       )}
 
       <div className="ax-audit__filters">
-        {(['all', 'decision', 'execution', 'result'] as const).map((k) => (
+        {FILTER_KINDS.map((k) => (
           <button
             key={k}
             className={filter === k ? 'is-active' : ''}
-            onClick={() => setFilter(k)}
+            onClick={() => setFilter(k as 'all' | AuditEntry['kind'])}
             aria-pressed={filter === k}
           >
-            {k === 'all' ? 'All entries' : k}
+            {k === 'all' ? 'All entries' : k.replace('_', ' ')}
           </button>
         ))}
       </div>
@@ -114,7 +120,7 @@ export function AuditChain({
             <button className="ax-entry__row" onClick={() => setOpen(open === e.seq ? null : e.seq)}>
               <span className="figure ax-entry__seq">{String(e.seq).padStart(4, '0')}</span>
               <span className={`ax-chip ax-chip--quiet ax-entry__kind`}>{e.kind}</span>
-              <span className="figure ax-entry__id">{e.entity_id}</span>
+              <span className="figure ax-entry__id">{e.entity_id ?? '—'}</span>
               <span className="figure ax-entry__hash">{e.hash.slice(0, 12)}…</span>
               <span className="figure ax-entry__ts">{timeIST(e.ts)}</span>
             </button>

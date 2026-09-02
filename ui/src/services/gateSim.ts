@@ -18,9 +18,9 @@ import { rupees } from './format';
  */
 
 const MESSAGING: ReadonlySet<string> = new Set([
-  'SEND_PAYMENT_LINK',
-  'SEND_NUDGE_SMS',
-  'SEND_NUDGE_WHATSAPP',
+  'PAYMENT_LINK_SMS',
+  'PAYMENT_LINK_WHATSAPP',
+  'DUNNING_EMAIL',
   'VOICE_NUDGE_REGIONAL',
 ]);
 
@@ -31,12 +31,15 @@ const SUSPENDED_MANDATES: ReadonlySet<string> = new Set([
 ]);
 
 const ALLOWED = new Set([
-  'NO_ACTION', 'RETRY_CHARGE', 'SEND_PAYMENT_LINK', 'SEND_NUDGE_SMS',
-  'SEND_NUDGE_WHATSAPP', 'VOICE_NUDGE_REGIONAL', 'ESCALATE_HUMAN', 'WRITE_OFF',
+  'NO_ACTION', 'RETRY_CHARGE', 'PAYMENT_LINK_SMS', 'PAYMENT_LINK_WHATSAPP',
+  'DUNNING_EMAIL', 'VOICE_NUDGE_REGIONAL', 'ESCALATE_HUMAN', 'WRITE_OFF',
 ]);
 
-const ATTEMPT_CEILING = 3;
-const COOLDOWN_MIN = 60;
+/* Mirrors gates.js DEFAULT_POLICY. The attempt ceiling is 4 in the
+ * shipped default config (the FINAL configuration raises it to 6);
+ * cooldown waits scale with attempt count: 0/6/24/72 hours. */
+const ATTEMPT_CEILING = 4;
+const COOLDOWN_HOURS = [0, 6, 24, 72];
 const QUIET_START = 9;   // 09:00 IST — intersection of RBI (8–19) and TRAI (9–21)
 const QUIET_END = 19;    // 19:00 IST
 
@@ -86,10 +89,10 @@ export function simulateGates(p: GateProbe): GateTrace {
         ? `${p.attempts} attempts ≥ ceiling of ${ATTEMPT_CEILING}. Small amounts write off; large amounts still go to a human.`
         : `${p.attempts} of ${ATTEMPT_CEILING} attempts used.`),
 
-    entry('cooldown', isCharge && p.minutes_since_last_attempt < COOLDOWN_MIN,
-      isCharge && p.minutes_since_last_attempt < COOLDOWN_MIN
-        ? `${p.minutes_since_last_attempt} min since last attempt, under the ${COOLDOWN_MIN} min minimum. Pacing, not a probability judgement.`
-        : `${p.minutes_since_last_attempt} min elapsed.`),
+    entry('cooldown', (isCharge || isMessaging) && cooldownBlocks(p),
+      (isCharge || isMessaging) && cooldownBlocks(p)
+        ? `${(p.minutes_since_last_attempt / 60).toFixed(1)}h since the last attempt — the pacing rule wants ${cooldownRequired(p)}h at ${p.attempts} attempts. Deferring rather than pestering.`
+        : `${(p.minutes_since_last_attempt / 60).toFixed(1)}h since last attempt, meets the ${cooldownRequired(p)}h minimum.`),
 
     entry('quiet_hours',
       isMessaging && (p.hour_ist < QUIET_START || p.hour_ist >= QUIET_END),
@@ -125,6 +128,15 @@ export function simulateGates(p: GateProbe): GateTrace {
   });
 
   return trace;
+}
+
+/* gates.js paces retries: the required gap scales with attempts already
+ * made — cooldownHoursByAttempt[min(count, 3)] = 0/6/24/72 hours. */
+function cooldownRequired(p: GateProbe): number {
+  return COOLDOWN_HOURS[Math.min(p.attempts, COOLDOWN_HOURS.length - 1)];
+}
+function cooldownBlocks(p: GateProbe): boolean {
+  return p.minutes_since_last_attempt / 60 < cooldownRequired(p);
 }
 
 export function firstBlock(trace: GateTrace) {

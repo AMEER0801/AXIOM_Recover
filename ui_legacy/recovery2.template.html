@@ -1,0 +1,715 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>AXIOM RECOVER — corrected recovery run</title>
+<script>
+(function(){
+  var t = new URLSearchParams(location.search).get("theme") === "dark" ? "dark" : "light";
+  document.documentElement.setAttribute("data-theme", t);
+})();
+</script>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Archivo:wght@600;700&family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+/* ══════════════════════════════════════════════════════════════
+   AXIOM RECOVER · CORRECTED RECOVERY CONSOLE
+
+   Third sibling to ledger.html and recovery.html. Identical
+   ledger-paper palette, identical typography, identical rule that
+   colour carries meaning and nothing else. A reviewer moving
+   between the three consoles should see one instrument, not three
+   dashboards.
+
+   Inherited semantics, unchanged:
+     paid   — money recovered
+     gate   — a gate intervened; this is the system working, not a
+              fault, so it does NOT get the alarm colour
+     human  — escalated, needs a person
+     closed — written off
+
+   One addition this console needs and its siblings do not. Its
+   whole subject is that recovery counted per RECORD and recovery
+   counted per RUPEE are different numbers that move in opposite
+   directions. Rather than invent a colour for "value", the two
+   measures are separated by POSITION — a slopegraph whose lines
+   cross. The crossing is the finding. Nothing else on the page is
+   allowed to be that loud.
+   ══════════════════════════════════════════════════════════════ */
+
+:root{
+  --paper:#E7EAEE;
+  --sheet:#F6F8FA;
+  --ink:#131822;
+  --ink-2:#5A6472;
+  --ink-3:#8A93A0;
+  --rule:#C4CCD6;
+  --rule-soft:#D8DEE5;
+
+  --paid:#0D6B58;
+  --gate:#2B4C8A;
+  --human:#8A6714;
+  --closed:#9299A5;
+  --defer:#C4CCD6;
+  --alarm:#96341F;        /* reserved for a genuine error: a broken chain,
+                             an uncited rate. Never for a gate block. */
+
+  --paid-wash:#0D6B5814;
+  --gate-wash:#2B4C8A14;
+  --human-wash:#8A671414;
+  --alarm-wash:#96341F14;
+
+  --shadow:0 1px 2px #13182208, 0 8px 24px -12px #13182222;
+
+  --mono:"IBM Plex Mono",ui-monospace,Menlo,monospace;
+  --sans:"IBM Plex Sans",system-ui,-apple-system,sans-serif;
+  --disp:"Archivo","Archivo Narrow",var(--sans);
+}
+
+:root[data-theme="dark"]{
+  --paper:#15171B;
+  --sheet:#1C1F24;
+  --ink:#ECEEF1;
+  --ink-2:#9CA3AE;
+  --ink-3:#6B7280;
+  --rule:#2D3138;
+  --rule-soft:#262A30;
+
+  --paid:#3FB893;
+  --gate:#7B9BE0;
+  --human:#DDAB49;
+  --closed:#7D8492;
+  --defer:#3A3F49;
+  --alarm:#E0705A;
+
+  --paid-wash:#3FB89322;
+  --gate-wash:#7B9BE022;
+  --human-wash:#DDAB4922;
+  --alarm-wash:#E0705A22;
+
+  --shadow:0 1px 2px #00000040, 0 8px 24px -12px #00000066;
+}
+
+*{box-sizing:border-box}
+html{-webkit-text-size-adjust:100%}
+body{
+  margin:0; background:var(--paper); color:var(--ink);
+  font-family:var(--sans); font-size:14px; line-height:1.55;
+  padding:32px 24px 96px;
+}
+.wrap{max-width:1080px; margin:0 auto}
+
+/* ── masthead ─────────────────────────────────────────────────── */
+.mast{display:flex; justify-content:space-between; align-items:flex-end; gap:24px; flex-wrap:wrap; margin-bottom:8px}
+.mast h1{
+  font-family:var(--disp); font-weight:700; font-size:clamp(22px,3.2vw,30px);
+  letter-spacing:-.015em; margin:0; line-height:1.1;
+}
+.mast h1 span{color:var(--ink-3); font-weight:600}
+.runid{font-family:var(--mono); font-size:11.5px; color:var(--ink-2); text-align:right; line-height:1.7}
+.runid b{color:var(--ink); font-weight:500}
+.rule{height:1px; background:var(--rule); margin:14px 0 26px}
+
+/* status chips — colour only where it means something */
+.chips{display:flex; gap:8px; flex-wrap:wrap; margin-bottom:26px}
+.chip{
+  font-family:var(--mono); font-size:11px; letter-spacing:.02em;
+  padding:4px 9px; border:1px solid var(--rule); border-radius:2px;
+  color:var(--ink-2); background:var(--sheet);
+}
+.chip.ok{color:var(--paid); border-color:color-mix(in srgb, var(--paid) 40%, var(--rule)); background:var(--paid-wash)}
+.chip.bad{color:var(--alarm); border-color:color-mix(in srgb, var(--alarm) 40%, var(--rule)); background:var(--alarm-wash)}
+
+/* ── panels ───────────────────────────────────────────────────── */
+.panel{background:var(--sheet); border:1px solid var(--rule-soft); border-radius:3px; box-shadow:var(--shadow); padding:22px 24px; margin-bottom:22px}
+.panel > h2{
+  font-family:var(--disp); font-weight:600; font-size:12px; letter-spacing:.09em;
+  text-transform:uppercase; color:var(--ink-2); margin:0 0 4px;
+}
+.panel > .sub{font-size:13px; color:var(--ink-2); margin:0 0 18px; max-width:70ch}
+.panel > .sub b{color:var(--ink); font-weight:600}
+
+/* ── the signature: count-vs-value slopegraph ─────────────────── */
+.hero{padding-bottom:26px}
+.hero h2{color:var(--ink)}
+.slope-wrap{position:relative; margin-top:6px}
+.slope{width:100%; height:auto; display:block; overflow:visible}
+.slope .axis-label{font-family:var(--mono); font-size:9.5px; fill:var(--ink-3); letter-spacing:.08em; text-transform:uppercase}
+.slope .arm-label{font-family:var(--sans); font-size:12.5px; font-weight:600}
+.slope .arm-val{font-family:var(--mono); font-size:12.5px; font-weight:500}
+.slope .grid{stroke:var(--rule-soft); stroke-width:1}
+.slope-line{fill:none; stroke-width:2.25; stroke-linecap:round}
+.slope-dot{stroke:var(--sheet); stroke-width:2.5}
+.verdict{
+  margin-top:20px; padding:14px 16px; border-left:3px solid var(--gate);
+  background:var(--gate-wash); font-size:13.5px; line-height:1.6; border-radius:0 2px 2px 0;
+}
+.verdict b{font-weight:600}
+
+/* ── data tables ──────────────────────────────────────────────── */
+table{width:100%; border-collapse:collapse; font-size:13px}
+th{
+  font-family:var(--mono); font-size:10.5px; font-weight:500; letter-spacing:.06em;
+  text-transform:uppercase; color:var(--ink-3); text-align:right;
+  padding:0 0 8px; border-bottom:1px solid var(--rule);
+}
+th:first-child{text-align:left}
+td{padding:9px 0; border-bottom:1px solid var(--rule-soft); text-align:right; font-family:var(--mono); font-size:12.5px}
+td:first-child{text-align:left; font-family:var(--sans); font-size:13px}
+tbody tr:last-child td{border-bottom:none}
+.num-pos{color:var(--paid)}
+.num-neg{color:var(--alarm)}
+.dim{color:var(--ink-3)}
+.strike{text-decoration:line-through; color:var(--ink-3)}
+.arm-tag{display:inline-block; width:9px; height:9px; border-radius:50%; margin-right:8px; vertical-align:-1px}
+
+/* ── concentration (Lorenz) ───────────────────────────────────── */
+.lorenz{width:100%; height:auto; display:block; overflow:visible}
+.lorenz .curve{fill:none; stroke:var(--gate); stroke-width:2}
+.lorenz .equality{fill:none; stroke:var(--rule); stroke-width:1; stroke-dasharray:3 3}
+.lorenz .ceil{stroke:var(--human); stroke-width:1.5; stroke-dasharray:4 3}
+.lorenz .fillzone{fill:var(--gate-wash)}
+.lorenz text{font-family:var(--mono); font-size:9.5px; fill:var(--ink-3)}
+.lorenz .anno{font-family:var(--sans); font-size:11.5px; fill:var(--ink-2); font-weight:500}
+
+/* ── interval bars for CIs ────────────────────────────────────── */
+.ci-row{display:grid; grid-template-columns:146px 1fr 148px; gap:14px; align-items:center; padding:9px 0; border-bottom:1px solid var(--rule-soft)}
+.ci-row:last-child{border-bottom:none}
+.ci-name{font-size:13px; font-weight:600}
+.ci-track{position:relative; height:22px}
+.ci-axis{position:absolute; inset:auto 0 50% 0; height:1px; background:var(--rule-soft)}
+.ci-zero{position:absolute; top:0; bottom:0; width:1px; background:var(--ink-3)}
+.ci-bar{position:absolute; top:50%; transform:translateY(-50%); height:7px; border-radius:4px}
+.ci-mid{position:absolute; top:50%; transform:translate(-50%,-50%); width:3px; height:15px; border-radius:1px; background:var(--ink)}
+.ci-val{font-family:var(--mono); font-size:11.5px; color:var(--ink-2); text-align:right}
+.ci-note{font-size:12px; color:var(--ink-2); margin-top:12px}
+
+/* ── bandit revisions ─────────────────────────────────────────── */
+.rev{display:grid; grid-template-columns:1fr 62px 20px 62px 74px; gap:10px; align-items:center; padding:8px 0; border-bottom:1px solid var(--rule-soft); font-size:12.5px}
+.rev:last-child{border-bottom:none}
+.rev-arm{font-family:var(--mono); font-size:11.5px; color:var(--ink)}
+.rev-arm em{color:var(--ink-3); font-style:normal}
+.rev-num{font-family:var(--mono); font-size:12px; text-align:right}
+.rev-arrow{text-align:center; color:var(--ink-3); font-family:var(--mono)}
+.rev-pulls{font-family:var(--mono); font-size:11px; color:var(--ink-3); text-align:right}
+.up{color:var(--paid)} .down{color:var(--human)}
+
+/* ── churn curve ──────────────────────────────────────────────── */
+.churn{width:100%; height:auto; display:block; overflow:visible}
+.churn .oo{fill:none; stroke:var(--human); stroke-width:2}
+.churn .val{fill:none; stroke:var(--paid); stroke-width:2; stroke-dasharray:4 3}
+.churn text{font-family:var(--mono); font-size:9.5px; fill:var(--ink-3)}
+/* Both series are labelled, and the two lines cross. A halo keeps a
+   number readable wherever the other line runs underneath it —
+   cheaper and more robust than trying to dodge the collision. */
+.churn .pt{font-size:10px; font-weight:500; paint-order:stroke; stroke:var(--sheet); stroke-width:3.5px; stroke-linejoin:round}
+.legend{display:flex; gap:18px; font-size:12px; color:var(--ink-2); margin-top:10px; flex-wrap:wrap}
+.legend i{display:inline-block; width:16px; height:2px; margin-right:6px; vertical-align:3px}
+
+/* ── decision inspector ───────────────────────────────────────── */
+.tools{display:flex; gap:10px; align-items:center; flex-wrap:wrap; margin-bottom:14px}
+select,input[type=search]{
+  font-family:var(--mono); font-size:12px; padding:6px 9px; color:var(--ink);
+  background:var(--paper); border:1px solid var(--rule); border-radius:2px;
+}
+input[type=search]{min-width:180px}
+.dtable{max-height:440px; overflow:auto; border:1px solid var(--rule-soft); border-radius:2px}
+.dtable table{font-size:12px}
+.dtable th{position:sticky; top:0; background:var(--sheet); padding:9px 10px; z-index:1}
+.dtable td{padding:7px 10px; font-size:11.5px}
+.dtable tbody tr{cursor:pointer}
+.dtable tbody tr:hover{background:var(--gate-wash)}
+.act{font-family:var(--mono); font-size:11px; padding:2px 6px; border-radius:2px; white-space:nowrap}
+.act.paid{color:var(--paid); background:var(--paid-wash)}
+.act.gated{color:var(--gate); background:var(--gate-wash)}
+.act.human{color:var(--human); background:var(--human-wash)}
+.act.none{color:var(--ink-3)}
+.trace{background:var(--paper); padding:0}
+.trace-in{padding:12px 14px; font-family:var(--mono); font-size:11px; line-height:1.75}
+.trace-in div{display:flex; gap:10px; padding:2px 0}
+.trace-in .g{width:190px; flex:none; color:var(--ink-2)}
+.trace-in .b{color:var(--gate); font-weight:500}
+.trace-in .p{color:var(--ink-3)}
+.empty{padding:26px; text-align:center; color:var(--ink-3); font-size:13px}
+
+footer{margin-top:34px; font-size:12px; color:var(--ink-3); line-height:1.7}
+footer code{font-family:var(--mono); font-size:11.5px; color:var(--ink-2)}
+
+@media (max-width:720px){
+  body{padding:20px 14px 64px}
+  .ci-row{grid-template-columns:1fr; }
+  .ci-val{grid-column:1/-1; text-align:left}
+  .rev{grid-template-columns:1fr 54px 16px 54px; }
+  .rev-pulls{display:none}
+}
+
+/* One orchestrated moment: the slopegraph draws itself, because the
+   crossing is the argument and watching it cross makes the point
+   better than seeing it already crossed. Nothing else animates. */
+@media (prefers-reduced-motion:no-preference){
+  .slope-line{stroke-dasharray:var(--len); stroke-dashoffset:var(--len); animation:draw .85s cubic-bezier(.22,.61,.36,1) forwards}
+  .slope-dot,.slope .arm-val{opacity:0; animation:fade .4s ease forwards .6s}
+  @keyframes draw{to{stroke-dashoffset:0}}
+  @keyframes fade{to{opacity:1}}
+}
+:focus-visible{outline:2px solid var(--gate); outline-offset:2px}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <header class="mast">
+    <h1>Corrected recovery run<br><span>AXIOM Recover · what the metric was hiding</span></h1>
+    <div class="runid" id="runid"></div>
+  </header>
+  <div class="rule"></div>
+  <div class="chips" id="chips"></div>
+
+  <!-- ── SIGNATURE ─────────────────────────────────────────── -->
+  <section class="panel hero">
+    <h2>The measure decides the winner</h2>
+    <p class="sub">Same batch, same gates, same frozen customer model — scored two ways. Counted per <b>record</b>, the smart policy wins. Counted per <b>rupee</b>, it loses to a blind retry loop. The lines cross because 20% of the records hold 93% of the money, and only one of these two numbers can see that.</p>
+    <div class="slope-wrap"><svg class="slope" id="slope" viewBox="0 0 760 300" role="img" aria-labelledby="slopetitle"><title id="slopetitle">Recovery by record count versus by rupee value, three policies</title></svg></div>
+    <div class="verdict" id="verdict"></div>
+  </section>
+
+  <!-- ── ACCOUNTING ────────────────────────────────────────── -->
+  <section class="panel">
+    <h2>What the original run did not charge</h2>
+    <p class="sub"><code>gates.js</code> prices a human review and writes it into the audit chain. <code>recover.js</code> never adds it to the spend tracker, because <code>ESCALATE_HUMAN</code> sits outside its acting set. The smart policy escalates far more often than the baseline, so the labour goes missing <b>unevenly</b> — and the published delta absorbs the difference.</p>
+    <table id="acct"></table>
+  </section>
+
+  <!-- ── CONCENTRATION ─────────────────────────────────────── -->
+  <section class="panel">
+    <h2>Where the money actually is</h2>
+    <p class="sub">Records ordered by size. Everything left of the dashed line sits at or above the ₹10,000 approval ceiling — which the original loop routed to a human and then marked resolved forever, recovering nothing.</p>
+    <svg class="lorenz" id="lorenz" viewBox="0 0 760 250" role="img" aria-labelledby="lortitle"><title id="lortitle">Cumulative share of value by record, with the approval ceiling marked</title></svg>
+  </section>
+
+  <!-- ── CORRECTED ARMS ────────────────────────────────────── -->
+  <section class="panel">
+    <h2>Corrected run · seed batch</h2>
+    <p class="sub">Escalation labour billed to whichever arm requested it. Ceiling escalations routed to a review queue that returns approved records to automation instead of abandoning them. The queue is offered to <b>every</b> arm, so it is not a privilege the new policy gets.</p>
+    <table id="arms"></table>
+  </section>
+
+  <!-- ── SIGNIFICANCE ──────────────────────────────────────── -->
+  <section class="panel" id="ci-panel">
+    <h2>Is the difference real</h2>
+    <p class="sub">Paired 95% bootstrap intervals on the per-seed difference against the baseline. Every arm faces an identical population on each seed, so the difference is paired and the paired spread is the honest thing to quote.</p>
+    <div id="ci-value"></div>
+    <p class="ci-note" id="ci-note"></p>
+  </section>
+
+  <!-- ── LEARNING ──────────────────────────────────────────── -->
+  <section class="panel">
+    <h2>What the agent changed its mind about</h2>
+    <p class="sub">Beliefs come from <code>agent-priors.json</code>, never from the frozen truth table — a policy that read the answer key would score beautifully and mean nothing. Two of these priors were set deliberately wrong to see whether the bandit would find them.</p>
+    <div id="revs"></div>
+  </section>
+
+  <!-- ── CHURN ─────────────────────────────────────────────── -->
+  <section class="panel" id="churn-panel">
+    <h2>The opt-out objection is a price, not a flaw</h2>
+    <p class="sub">The policy's appetite for voice calls falls out of one number: what a churned customer is assumed to cost. The base rate sets it at ₹480 and sources it honestly as a business decision rather than a benchmark. Raise it and the policy restrains itself — no new rule, no cap.</p>
+    <svg class="churn" id="churn" viewBox="0 0 760 286" role="img" aria-labelledby="chtitle"><title id="chtitle">Opt-outs and value recovered as the cost of churn rises</title></svg>
+    <p class="ci-note" id="churn-note"></p>
+  </section>
+
+  <!-- ── INSPECTOR ─────────────────────────────────────────── -->
+  <section class="panel">
+    <h2>Every decision, every gate</h2>
+    <p class="sub">The full decision log for the learning arm. All eleven gate results are kept on every row, including the ones that passed — dropping the passes would be the easy compression and the wrong one, since the gate layer emits them precisely so nobody has to ask whether the others were checked. Select a row to open its trace.</p>
+    <div class="tools">
+      <select id="f-action"><option value="">every action</option></select>
+      <select id="f-outcome">
+        <option value="">every outcome</option>
+        <option value="paid">recovered</option>
+        <option value="gated">gate intervened</option>
+        <option value="approved">dual-control approved</option>
+      </select>
+      <input type="search" id="f-text" placeholder="entity, reason, method…">
+      <span class="dim" id="dcount" style="font-family:var(--mono);font-size:11.5px"></span>
+    </div>
+    <div class="dtable"><table id="dec"><thead><tr>
+      <th>#</th><th>entity</th><th>reason</th><th style="text-align:right">amount</th>
+      <th style="text-align:right">att</th><th style="text-align:left">proposed</th>
+      <th style="text-align:left">executed</th><th style="text-align:right">outcome</th>
+    </tr></thead><tbody id="dbody"></tbody></table></div>
+  </section>
+
+  <footer id="foot"></footer>
+</div>
+
+<script id="payload" type="application/json">__DATA__</script>
+<script>
+(function(){
+"use strict";
+var D = JSON.parse(document.getElementById("payload").textContent);
+
+/* ── formatting only. Every figure below was computed in
+      build-recovery2.js; this file arranges, it does not derive. ── */
+function rupees(p){ return "\u20B9" + Math.round(p/100).toLocaleString("en-IN"); }
+function rupeesSigned(p){ return (p<0?"\u2212":"+") + "\u20B9" + Math.abs(Math.round(p/100)).toLocaleString("en-IN"); }
+function pct(n){ return n.toFixed(1) + "%"; }
+function el(tag, cls, txt){ var e=document.createElement(tag); if(cls)e.className=cls; if(txt!=null)e.textContent=txt; return e; }
+
+var ARM = { baseline:{label:"blind retry", color:"var(--closed)"},
+            smart:{label:"rule ladder", color:"var(--human)"},
+            ev:{label:"expected value + bandit", color:"var(--paid)"} };
+
+/* ── masthead ─────────────────────────────────────────────── */
+var m = D.meta;
+document.getElementById("runid").innerHTML =
+  "seed <b>" + m.seed + "</b> \u00b7 " + m.records + " records \u00b7 " + m.rounds + " rounds<br>" +
+  "warm-up <b>" + m.warmup + "</b> held-out populations (seeds " + m.warmSeeds[0] + "\u2013" + m.warmSeeds[1] + ")<br>" +
+  "chain head <b>" + m.head.slice(0,20) + "\u2026</b>";
+
+var chips = document.getElementById("chips");
+function chip(t, state){ chips.appendChild(el("span","chip"+(state?" "+state:""), t)); }
+chip(m.chainOk ? "hash chain verified \u00b7 " + m.chainLength + " entries" : "CHAIN BROKEN", m.chainOk?"ok":"bad");
+chip(m.reportable ? "every base rate cited" : m.uncitedCount + " uncited base rates", m.reportable?"ok":"bad");
+chip("frozen customer model untouched", "ok");
+chip("escalation labour billed", "ok");
+chip("evaluation seed never trained on", "ok");
+
+/* ── SIGNATURE: the slopegraph ────────────────────────────── */
+(function(){
+  var svg = document.getElementById("slope");
+  var W=760, H=300, padT=48, padB=44, xL=268, xR=636;
+  var keys = ["baseline","smart","ev"];
+  var left  = keys.map(function(k){ return D.corrected[k].countPct; });
+  var right = keys.map(function(k){ return D.corrected[k].valuePct; });
+  var all = left.concat(right);
+  var lo = Math.min.apply(null, all), hi = Math.max.apply(null, all);
+  var span = Math.max(hi-lo, 6), min = lo - span*0.28, max = hi + span*0.28;
+  function y(v){ return padT + (H-padT-padB) * (1 - (v-min)/(max-min)); }
+  var ns="http://www.w3.org/2000/svg";
+  function node(t,a){ var e=document.createElementNS(ns,t); for(var k in a) e.setAttribute(k,a[k]); return e; }
+
+  svg.appendChild(node("line",{x1:xL,y1:padT-16,x2:xL,y2:H-padB+8,"class":"grid"}));
+  svg.appendChild(node("line",{x1:xR,y1:padT-16,x2:xR,y2:H-padB+8,"class":"grid"}));
+  var t1=node("text",{x:xL,y:padT-26,"text-anchor":"middle","class":"axis-label"}); t1.textContent="counted per record"; svg.appendChild(t1);
+  var t2=node("text",{x:xR,y:padT-26,"text-anchor":"middle","class":"axis-label"}); t2.textContent="counted per rupee"; svg.appendChild(t2);
+
+  keys.forEach(function(k,i){
+    var c = ARM[k].color, y1=y(left[i]), y2=y(right[i]);
+    var p = node("path",{d:"M"+xL+","+y1+"L"+xR+","+y2,"class":"slope-line",stroke:c});
+    var len = Math.hypot(xR-xL, y2-y1);
+    p.style.setProperty("--len", len.toFixed(1));
+    p.style.animationDelay = (i*0.12)+"s";
+    svg.appendChild(p);
+    svg.appendChild(node("circle",{cx:xL,cy:y1,r:5,fill:c,"class":"slope-dot"}));
+    svg.appendChild(node("circle",{cx:xR,cy:y2,r:5,fill:c,"class":"slope-dot"}));
+
+    /* Name and value share one baseline. Stacking them collided
+       whenever two arms landed within ~20px of each other, which on
+       this data they routinely do. */
+    var nm=node("text",{x:xL-18,y:y1+4,"text-anchor":"end","class":"arm-label",fill:c});
+    var tv=document.createElementNS(ns,"tspan");
+    tv.setAttribute("fill","var(--ink-3)"); tv.setAttribute("class","arm-val");
+    tv.textContent = "  " + pct(left[i]);
+    nm.textContent = ARM[k].label; nm.appendChild(tv); svg.appendChild(nm);
+    var v2=node("text",{x:xR+18,y:y2+4,"class":"arm-val",fill:c});
+    v2.textContent = pct(right[i]); svg.appendChild(v2);
+  });
+
+  var sm=D.corrected.smart, bl=D.corrected.baseline, ee=D.corrected.ev;
+  var dCount=(sm.countPct-bl.countPct), dValue=(sm.valuePct-bl.valuePct);
+  document.getElementById("verdict").innerHTML =
+    "The rule ladder recovers <b>" + dCount.toFixed(1) + " points more records</b> than the blind baseline and <b>" +
+    Math.abs(dValue).toFixed(1) + " points " + (dValue<0?"less":"more") + " money</b>. " +
+    "Its published lift was counted the first way. The expected-value arm is ahead on both, at " +
+    pct(ee.countPct) + " of records and " + pct(ee.valuePct) + " of value.";
+})();
+
+/* ── accounting ───────────────────────────────────────────── */
+(function(){
+  var o=D.original, t=document.getElementById("acct");
+  t.innerHTML = "<thead><tr><th>as originally reported</th><th>escalations</th><th>labour not charged</th><th>net recovered</th></tr></thead>";
+  var tb=el("tbody");
+  [["baseline","baseline"],["smart","smart policy"]].forEach(function(pair){
+    var a=o[pair[0]], tr=el("tr");
+    tr.appendChild(el("td",null,pair[1]));
+    tr.appendChild(el("td",null,String(a.escalations)));
+    var u=el("td","num-neg", "\u2212"+rupees(a.unbilled)); tr.appendChild(u);
+    tr.appendChild(el("td",null,rupees(a.net)));
+    tb.appendChild(tr);
+  });
+  var tr=el("tr");
+  tr.appendChild(el("td",null,"published delta"));
+  tr.appendChild(el("td","dim","\u2014"));
+  tr.appendChild(el("td","num-neg","\u2212"+rupees(o.unbilledSkew)+" skew"));
+  var d=el("td"); d.innerHTML='<span class="strike">'+rupees(o.deltaNet)+'</span> &nbsp;'+rupees(o.deltaNet-o.unbilledSkew);
+  tr.appendChild(d); tb.appendChild(tr);
+  t.appendChild(tb);
+})();
+
+/* ── concentration ────────────────────────────────────────── */
+(function(){
+  var c=D.concentration, svg=document.getElementById("lorenz");
+  var W=760,H=250,l=52,r=18,tp=18,b=38, w=W-l-r, h=H-tp-b;
+  var ns="http://www.w3.org/2000/svg";
+  function node(t,a){ var e=document.createElementNS(ns,t); for(var k in a) e.setAttribute(k,a[k]); return e; }
+  var n=c.lorenz.length;
+  function X(i){ return l + w*(i/n); }
+  function Y(p){ return tp + h*(1-p/100); }
+
+  svg.appendChild(node("path",{d:"M"+l+","+Y(0)+"L"+(l+w)+","+Y(100),"class":"equality"}));
+  var d="M"+l+","+Y(0), fill="M"+l+","+Y(0);
+  c.lorenz.forEach(function(pt){ d+="L"+X(pt.i)+","+Y(pt.cumPct); fill+="L"+X(pt.i)+","+Y(pt.cumPct); });
+  fill += "L"+(l+w)+","+Y(0)+"Z";
+  svg.appendChild(node("path",{d:fill,"class":"fillzone"}));
+  svg.appendChild(node("path",{d:d,"class":"curve"}));
+
+  var cx=X(c.aboveCount);
+  svg.appendChild(node("line",{x1:cx,y1:tp,x2:cx,y2:tp+h,"class":"ceil"}));
+  var a1=node("text",{x:cx+9,y:tp+20,"class":"anno",fill:"var(--human)"});
+  a1.textContent = c.aboveCount+" records \u00b7 "+c.aboveValuePct+"% of the money";
+  svg.appendChild(a1);
+  var a2=node("text",{x:cx+9,y:tp+36,"class":"anno"});
+  a2.textContent = "at or above the \u20B910,000 ceiling";
+  svg.appendChild(a2);
+
+  [0,50,100].forEach(function(p){
+    var t=node("text",{x:l-10,y:Y(p)+3,"text-anchor":"end"}); t.textContent=p+"%"; svg.appendChild(t);
+    svg.appendChild(node("line",{x1:l,y1:Y(p),x2:l+w,y2:Y(p),stroke:"var(--rule-soft)","stroke-width":p===0?1:0.5}));
+  });
+  var xt=node("text",{x:l,y:H-14}); xt.textContent="largest record"; svg.appendChild(xt);
+  var xt2=node("text",{x:l+w,y:H-14,"text-anchor":"end"}); xt2.textContent="all "+c.total+" records"; svg.appendChild(xt2);
+  var yl=node("text",{x:l,y:tp-5}); yl.textContent="cumulative value"; svg.appendChild(yl);
+})();
+
+/* ── corrected arms table ─────────────────────────────────── */
+(function(){
+  var t=document.getElementById("arms");
+  t.innerHTML="<thead><tr><th>policy</th><th>records</th><th>by count</th><th>gross</th><th>by value</th><th>messaging</th><th>labour</th><th>opt-outs</th><th>net</th></tr></thead>";
+  var tb=el("tbody"), base=D.corrected.baseline.net;
+  ["baseline","smart","ev"].forEach(function(k){
+    var a=D.corrected[k], tr=el("tr"), c0=el("td");
+    var dot=el("span","arm-tag"); dot.style.background=ARM[k].color;
+    c0.appendChild(dot); c0.appendChild(document.createTextNode(ARM[k].label)); tr.appendChild(c0);
+    tr.appendChild(el("td",null,String(a.paid)));
+    tr.appendChild(el("td",null,pct(a.countPct)));
+    tr.appendChild(el("td",null,rupees(a.gross)));
+    tr.appendChild(el("td",null,pct(a.valuePct)));
+    tr.appendChild(el("td",null,rupees(a.messagingCost)));
+    tr.appendChild(el("td",null,rupees(a.escalationCost)));
+    tr.appendChild(el("td",null,String(a.optOuts)));
+    var net=el("td",null,rupees(a.net));
+    if(k!=="baseline") net.className = a.net>base ? "num-pos" : "num-neg";
+    tr.appendChild(net); tb.appendChild(tr);
+  });
+  t.appendChild(tb);
+
+  var ap=D.approvals;
+  var p=el("p","ci-note");
+  p.textContent = "Review desk (learning arm): " + ap.reviews_requested + " requested, " + ap.approved +
+    " approved, " + ap.rejected + " rejected, " + ap.still_pending + " still open at close. " +
+    "Approval rate " + Math.round(ap.approval_rate_config*100) + "% and " + ap.latency_rounds_config +
+    "-round latency are operating assumptions, swept rather than asserted \u2014 they describe how a desk is staffed, not how a customer behaves.";
+  t.parentNode.appendChild(p);
+})();
+
+/* ── confidence intervals ─────────────────────────────────── */
+(function(){
+  var host=document.getElementById("ci-value"), note=document.getElementById("ci-note");
+  if(!D.multiseed){
+    document.getElementById("ci-panel").querySelector(".sub").textContent =
+      "Built with --quick, so the multi-seed sweep was skipped. Run without it to populate this panel.";
+    host.innerHTML='<div class="empty">no sweep in this build</div>'; return;
+  }
+  var ms=D.multiseed;
+  var rows=[["smart","rule ladder"],["ev","expected value + bandit"]];
+  var lo=0,hi=0;
+  rows.forEach(function(p){ var c=ms.ciValue[p[0]]; lo=Math.min(lo,c.lo); hi=Math.max(hi,c.hi); });
+  var pad=(hi-lo)*0.12; lo-=pad; hi+=pad;
+  function X(v){ return ((v-lo)/(hi-lo))*100; }
+
+  rows.forEach(function(p){
+    var c=ms.ciValue[p[0]], crosses = c.lo<0 && c.hi>0;
+    var row=el("div","ci-row");
+    row.appendChild(el("div","ci-name",p[1]));
+    var track=el("div","ci-track");
+    track.appendChild(el("div","ci-axis"));
+    var z=el("div","ci-zero"); z.style.left=X(0)+"%"; track.appendChild(z);
+    var bar=el("div","ci-bar");
+    bar.style.left=X(c.lo)+"%"; bar.style.width=(X(c.hi)-X(c.lo))+"%";
+    bar.style.background = crosses ? "var(--defer)" : ARM[p[0]].color;
+    track.appendChild(bar);
+    var mid=el("div","ci-mid"); mid.style.left=X((c.lo+c.hi)/2)+"%"; track.appendChild(mid);
+    row.appendChild(track);
+    row.appendChild(el("div","ci-val","["+c.lo.toFixed(1)+", "+c.hi.toFixed(1)+"] pp"));
+    host.appendChild(row);
+  });
+
+  var evc=ms.ciValue.ev, smc=ms.ciValue.smart;
+  note.innerHTML = ms.seeds + " seeds, value-recovery difference in percentage points. " +
+    "The rule ladder's interval " + (smc.lo<0&&smc.hi>0 ? "<b>crosses zero</b> \u2014 its advantage is not distinguishable from none" : "excludes zero") + "; " +
+    "the learning arm's " + (evc.lo<0&&evc.hi>0 ? "crosses zero too" : "<b>excludes zero</b>") + ". " +
+    "It beats the baseline on " + ms.wins.ev + " of " + ms.seeds + " seeds, the rule ladder on " + ms.wins.smart + ". " +
+    "Rupee totals are far noisier than these percentages, because a handful of very large invoices dominate the sum \u2014 quote the percentage.";
+})();
+
+/* ── bandit revisions ─────────────────────────────────────── */
+(function(){
+  var host=document.getElementById("revs");
+  if(!D.bandit.length){ host.innerHTML='<div class="empty">no arm gathered enough evidence to move off its prior</div>'; return; }
+  D.bandit.forEach(function(r){
+    var row=el("div","rev"), up=r.belief>r.prior;
+    var a=el("div","rev-arm");
+    a.innerHTML = r.channel.toLowerCase().replace(/_/g," ") + ' <em>\u00b7 ' + r.ctx.replace(/_/g," ") + '</em>';
+    row.appendChild(a);
+    row.appendChild(el("div","rev-num dim",(r.prior*100).toFixed(1)+"%"));
+    row.appendChild(el("div","rev-arrow","\u2192"));
+    row.appendChild(el("div","rev-num "+(up?"up":"down"),(r.belief*100).toFixed(1)+"%"));
+    row.appendChild(el("div","rev-pulls",r.pulls+" tries"));
+    host.appendChild(row);
+  });
+})();
+
+/* ── churn: two stacked bands, one shared x-axis ───────────
+      Originally one plot with two y-scales. Two problems: the
+      series crossed near ₹1,500 and their labels sat on top of
+      each other, and — worse — an auto-fitted second axis made a
+      3-point drop in value recovery look as dramatic as a 91% drop
+      in opt-outs. Both series now start at zero in their own band,
+      so the shapes are directly comparable and the flat one looks
+      flat, which is the honest reading and also the argument. ── */
+(function(){
+  if(!D.churn){ document.getElementById("churn-panel").style.display="none"; return; }
+  var svg=document.getElementById("churn"), c=D.churn;
+  var W=760,H=286,l=54,r=22,tp=26,gap=38,bandH=82,axis=40;
+  var w=W-l-r;
+  var ns="http://www.w3.org/2000/svg";
+  function node(t,a){ var e=document.createElementNS(ns,t); for(var k in a) e.setAttribute(k,a[k]); return e; }
+  function X(i){ return l + w*(i/(c.length-1)); }
+
+  var ooMax=Math.max.apply(null,c.map(function(p){return p.optOuts;}))*1.2;
+  var vMax=Math.max.apply(null,c.map(function(p){return p.valuePct;}))*1.2;
+  function band(top,val,max){ return top + bandH*(1-val/max); }
+
+  [{y:tp, key:"optOuts", max:ooMax, color:"var(--human)", cls:"oo",
+    cap:"opt-outs per batch", fmt:function(v){return v.toFixed(1);}},
+   {y:tp+bandH+gap, key:"valuePct", max:vMax, color:"var(--paid)", cls:"val",
+    cap:"value recovered", fmt:function(v){return v.toFixed(1)+"%";}}
+  ].forEach(function(B){
+    svg.appendChild(node("line",{x1:l,y1:B.y+bandH,x2:l+w,y2:B.y+bandH,stroke:"var(--rule-soft)","stroke-width":1}));
+    var cap=node("text",{x:l,y:B.y-15,fill:B.color}); cap.textContent=B.cap; svg.appendChild(cap);
+    var d="";
+    c.forEach(function(p,i){ d+=(i?"L":"M")+X(i)+","+band(B.y,p[B.key],B.max); });
+    svg.appendChild(node("path",{d:d,"class":B.cls}));
+    c.forEach(function(p,i){
+      var yy=band(B.y,p[B.key],B.max);
+      svg.appendChild(node("circle",{cx:X(i),cy:yy,r:3.5,fill:B.color}));
+      var t=node("text",{x:X(i),y:yy-10,"text-anchor":"middle",fill:B.color,"class":"pt"});
+      t.textContent=B.fmt(p[B.key]); svg.appendChild(t);
+    });
+    var z=node("text",{x:l-9,y:B.y+bandH+3,"text-anchor":"end"}); z.textContent="0"; svg.appendChild(z);
+  });
+
+  var xy=tp+bandH+gap+bandH;
+  c.forEach(function(p,i){
+    var t=node("text",{x:X(i),y:xy+20,"text-anchor":"middle"});
+    t.textContent="\u20B9"+(p.loss/100).toLocaleString("en-IN"); svg.appendChild(t);
+  });
+  var xl=node("text",{x:l+w/2,y:xy+36,"text-anchor":"middle"});
+  xl.textContent="assumed cost of losing a customer"; svg.appendChild(xl);
+
+  var first=c[0], target=c[3]||c[c.length-1];
+  var drop=Math.round((1-target.optOuts/first.optOuts)*100);
+  document.getElementById("churn-note").innerHTML =
+    "Pricing a lost customer at <b>"+("\u20B9"+(target.loss/100).toLocaleString("en-IN"))+"</b> instead of \u20B9"+(first.loss/100).toLocaleString("en-IN")+
+    " cuts opt-outs by <b>"+drop+"%</b> ("+first.optOuts.toFixed(1)+" \u2192 "+target.optOuts.toFixed(1)+
+    ") and costs "+(first.valuePct-target.valuePct).toFixed(1)+" points of value recovered. " +
+    "The churn constraint is a term in the objective, not a rule bolted on afterwards \u2014 so moving its price moves behaviour predictably.";
+})();
+
+/* ── decision inspector ───────────────────────────────────── */
+(function(){
+  var body=document.getElementById("dbody"), count=document.getElementById("dcount");
+  var fa=document.getElementById("f-action"), fo=document.getElementById("f-outcome"), ft=document.getElementById("f-text");
+  var acts={}; D.decisions.forEach(function(d){ acts[d.fin]=1; });
+  Object.keys(acts).sort().forEach(function(a){
+    var o=document.createElement("option"); o.value=a; o.textContent=a.toLowerCase().replace(/_/g," "); fa.appendChild(o);
+  });
+
+  function cls(d){
+    if(d.paid===1) return "paid";
+    if(!d.ok) return "gated";
+    if(d.fin==="ESCALATE_HUMAN") return "human";
+    return "none";
+  }
+  function outcomeText(d){
+    if(d.paid===1) return "recovered";
+    if(!d.ok) return "gate \u2192 "+d.fin.toLowerCase().replace(/_/g," ");
+    if(d.optout) return "opted out";
+    if(d.fin==="ESCALATE_HUMAN") return d.appr?"approved":"queued for review";
+    if(d.fin==="WRITE_OFF") return "written off";
+    if(d.fin==="NO_ACTION") return "deferred";
+    return "no payment";
+  }
+
+  function render(){
+    var a=fa.value, o=fo.value, q=ft.value.toLowerCase().trim();
+    var rows=D.decisions.filter(function(d){
+      if(a && d.fin!==a) return false;
+      if(o==="paid" && d.paid!==1) return false;
+      if(o==="gated" && d.ok) return false;
+      if(o==="approved" && !d.appr) return false;
+      if(q && (d.id+" "+(d.rsn||"")+" "+d.mth).toLowerCase().indexOf(q)<0) return false;
+      return true;
+    });
+    count.textContent = rows.length + " of " + D.decisions.length + " decisions";
+    body.innerHTML="";
+    if(!rows.length){ body.innerHTML='<tr><td colspan="8" class="empty">Nothing matches. Clear a filter to see decisions again.</td></tr>'; return; }
+    rows.slice(0,600).forEach(function(d){
+      var tr=el("tr");
+      tr.appendChild(el("td","dim",String(d.q)));
+      tr.appendChild(el("td",null,d.id.slice(0,16)));
+      tr.appendChild(el("td",null,(d.rsn||"\u2014").replace(/_/g," ")));
+      tr.appendChild(el("td",null,rupees(d.amt)));
+      tr.appendChild(el("td",null,String(d.att)));
+      tr.appendChild(el("td","dim",d.prop.toLowerCase().replace(/_/g," ")));
+      var f=el("td"); var sp=el("span","act "+cls(d),d.fin.toLowerCase().replace(/_/g," ")); f.appendChild(sp); tr.appendChild(f);
+      tr.appendChild(el("td",null,outcomeText(d)));
+      tr.tabIndex=0;
+      var open=false, det=null;
+      function toggle(){
+        open=!open;
+        if(open){
+          det=el("tr"); var td=el("td"); td.colSpan=8; td.className="trace";
+          var box=el("div","trace-in");
+          d.tr.forEach(function(t,i){
+            var line=el("div");
+            line.appendChild(el("span","g",D.gateNames[i]));
+            line.appendChild(el("span",t[0]?"b":"p",(t[0]?"blocked \u00b7 ":"passed \u00b7 ")+D.detailDict[t[1]]));
+            box.appendChild(line);
+          });
+          td.appendChild(box); det.appendChild(td);
+          tr.parentNode.insertBefore(det, tr.nextSibling);
+        } else if(det){ det.remove(); det=null; }
+      }
+      tr.addEventListener("click", toggle);
+      tr.addEventListener("keydown", function(e){ if(e.key==="Enter"||e.key===" "){ e.preventDefault(); toggle(); } });
+      body.appendChild(tr);
+    });
+  }
+  fa.addEventListener("change",render); fo.addEventListener("change",render); ft.addEventListener("input",render);
+  render();
+})();
+
+/* ── footer ───────────────────────────────────────────────── */
+document.getElementById("foot").innerHTML =
+  "Built " + new Date(m.built).toISOString().replace("T"," ").slice(0,16) + " UTC from <code>ui/build-recovery2.js</code>. " +
+  "Every figure is computed by <code>server/recover2.js</code> and inlined here; this page formats and arranges, it does not calculate. " +
+  "The frozen customer model was not modified \u2014 <code>node freeze.js --check</code> still passes, so these numbers come from the same world the original ones did. " +
+  "Reproduce with <code>node ui/build-recovery2.js --seed " + m.seed + " --records " + m.records + " --rounds " + m.rounds + "</code>. " +
+  "Append <code>?theme=dark</code> for the dark instrument.";
+})();
+</script>
+</body>
+</html>

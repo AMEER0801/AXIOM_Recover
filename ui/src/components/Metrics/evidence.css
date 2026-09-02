@@ -75,3 +75,46 @@
 @media (max-width: 900px) {
   .ax-hero { grid-template-columns: 1fr; }
 }
+
+/* ── value-recovery hero + CI + provenance (Evidence v2) ─────── */
+
+.ax-hero__unit {
+  font-size: 0.45em;
+  margin-left: 0.15em;
+  color: var(--ink-faint);
+}
+
+.ax-hero__line {
+  margin-top: 0.35rem;
+  font-size: 0.95rem;
+  color: var(--ink-soft, var(--ink));
+}
+
+.ax-hero__facts { max-width: 46ch; }
+
+.ax-stat__ci {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin: 0.25rem 0 0.35rem;
+  font-size: 0.85rem;
+}
+
+.ax-prov {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  gap: 0.4rem 1.2rem;
+  margin: 0.5rem 0;
+}
+
+.ax-prov div {
+  display: flex;
+  justify-content: space-between;
+  gap: 1rem;
+  border-bottom: 1px dashed var(--rule);
+  padding: 0.25rem 0;
+  font-size: 0.85rem;
+}
+
+.ax-prov dt { color: var(--ink-faint); }
+.ax-prov dd { text-align: right; }

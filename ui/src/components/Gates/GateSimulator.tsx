@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
-import type { FailureReason, GateTrace, Intervention } from '@/types/domain';
-import { evaluateGates, type GateProbe } from '@/services/api';
+import type { FailureReason, Intervention } from '@/types/domain';
+import { evaluateGates, type GateProbe, type GateVerdict } from '@/services/api';
 import { simulateGates, firstBlock } from '@/services/gateSim';
 import { rupees } from '@/services/format';
 import { GateTraceList } from './GateTraceList';
@@ -19,8 +19,8 @@ import './gates.css';
  */
 
 const INTERVENTIONS: Intervention[] = [
-  'RETRY_CHARGE', 'SEND_PAYMENT_LINK', 'SEND_NUDGE_SMS',
-  'SEND_NUDGE_WHATSAPP', 'VOICE_NUDGE_REGIONAL', 'ESCALATE_HUMAN',
+  'RETRY_CHARGE', 'PAYMENT_LINK_SMS', 'PAYMENT_LINK_WHATSAPP',
+  'DUNNING_EMAIL', 'VOICE_NUDGE_REGIONAL', 'ESCALATE_HUMAN',
   'WRITE_OFF', 'NO_ACTION',
 ];
 
@@ -47,31 +47,44 @@ const DEFAULT: GateProbe = {
 const PRESETS: { name: string; note: string; probe: Partial<GateProbe> }[] = [
   { name: 'Clean retry', note: 'Nothing blocks. All eleven still recorded.', probe: {} },
   { name: 'Kill switch', note: 'Everything stops, no exception carved out.', probe: { kill_switch: true } },
-  { name: 'Do-not-contact', note: 'Blocks a message. Does NOT block a silent retry.', probe: { do_not_contact: true, action: 'SEND_NUDGE_SMS' } },
+  { name: 'Do-not-contact', note: 'Blocks a message. Does NOT block a silent retry.', probe: { do_not_contact: true, action: 'PAYMENT_LINK_SMS' } },
   { name: 'Dead mandate', note: 'No live authorisation exists. Zero, as a rule.', probe: { action: 'RETRY_CHARGE', failure_reason: 'mandate_revoked' } },
-  { name: 'Business paused', note: 'Customer was never the blocker — messaging is pointless.', probe: { action: 'SEND_NUDGE_WHATSAPP', failure_reason: 'mandate_paused_by_business' } },
-  { name: 'Quiet hours', note: '23:00 IST. Outside the RBI∩TRAI window.', probe: { action: 'SEND_NUDGE_SMS', hour_ist: 23 } },
+  { name: 'Business paused', note: 'Customer was never the blocker — messaging is pointless.', probe: { action: 'PAYMENT_LINK_WHATSAPP', failure_reason: 'mandate_paused_by_business' } },
+  { name: 'Quiet hours', note: '23:00 IST. Outside the RBI∩TRAI window.', probe: { action: 'PAYMENT_LINK_SMS', hour_ist: 23 } },
   { name: 'Over ceiling', note: 'Amount alone forces human review.', probe: { amount_paise: 250_00_00 } },
   { name: 'Bad action', note: 'Outside the vocabulary — coerced, never guessed.', probe: { action: 'TRANSFER_ALL_FUNDS' as Intervention } },
 ];
 
+function localVerdict(probe: GateProbe): GateVerdict {
+  const trace = simulateGates(probe);
+  const block = firstBlock(trace);
+  return {
+    trace,
+    allowed: !block,
+    finalAction: block ? 'NO_ACTION' : probe.action,
+    estimatedCostPaise: 0,
+    idempotencyKey: null,
+  };
+}
+
 export function GateSimulator() {
   const [probe, setProbe] = useState<GateProbe>(DEFAULT);
-  const [trace, setTrace] = useState<GateTrace>(() => simulateGates(DEFAULT));
+  const [verdict, setVerdict] = useState<GateVerdict>(() => localVerdict(DEFAULT));
   const [evaluatedBy, setEvaluatedBy] = useState<'backend' | 'browser'>('browser');
 
-  const local = useMemo(() => simulateGates(probe), [probe]);
+  const local = useMemo(() => localVerdict(probe), [probe]);
 
   useEffect(() => {
     let cancelled = false;
     evaluateGates(probe, local).then((env) => {
       if (cancelled) return;
-      setTrace(env.data);
+      setVerdict(env.data);
       setEvaluatedBy(env.source === 'live' ? 'backend' : 'browser');
     });
     return () => { cancelled = true; };
   }, [probe, local]);
 
+  const trace = verdict.trace;
   const block = firstBlock(trace);
   const set = <K extends keyof GateProbe>(k: K, v: GateProbe[K]) =>
     setProbe((p) => ({ ...p, [k]: v }));
@@ -173,13 +186,25 @@ export function GateSimulator() {
               Verdict · evaluated by {evaluatedBy === 'backend' ? 'gates.js' : 'browser mirror'}
             </span>
             <p className="ax-verdict-card__headline">
-              {block ? 'Blocked' : 'Allowed'}
+              {verdict.allowed ? 'Allowed' : 'Blocked'}
             </p>
             <p className="ax-verdict-card__why">
               {block
                 ? <>First gate to block: <code>{block.gate}</code>. {block.detail}</>
                 : 'Every gate had its say and none of them objected. The action may run.'}
             </p>
+            {verdict.finalAction !== probe.action && (
+              <p className="ax-verdict-card__rewrite">
+                Proposed <code>{probe.action}</code> → what actually runs is{' '}
+                <strong><code>{verdict.finalAction}</code></strong> — the firewall
+                rewrites rather than rejects when a safer legal action exists.
+              </p>
+            )}
+            {verdict.estimatedCostPaise > 0 && evaluatedBy === 'backend' && (
+              <p className="ax-verdict-card__caveat">
+                Estimated direct cost of the final action: {rupees(verdict.estimatedCostPaise)}.
+              </p>
+            )}
             {evaluatedBy === 'browser' && (
               <p className="ax-verdict-card__caveat">
                 The backend isn't running, so this verdict came from the browser

@@ -9,7 +9,10 @@ const base: GateProbe = {
   attempts: 1,
   failure_reason: 'insufficient_funds',
   hour_ist: 14,
-  minutes_since_last_attempt: 180,
+  /* 7h since the last attempt: past gates.js's 6h minimum at attempt
+   * count 1, so the cooldown gate passes — the real pacing ladder is
+   * 0/6/24/72 hours by attempt count, and the mirror now matches it. */
+  minutes_since_last_attempt: 420,
   do_not_contact: false,
   kill_switch: false,
   spend_so_far_run_paise: 3700,
@@ -42,7 +45,7 @@ describe('kill switch', () => {
 
 describe('do-not-contact', () => {
   it('blocks a message', () => {
-    const t = simulateGates({ ...base, do_not_contact: true, action: 'SEND_NUDGE_SMS' });
+    const t = simulateGates({ ...base, do_not_contact: true, action: 'PAYMENT_LINK_SMS' });
     expect(t.find((e) => e.gate === 'do_not_contact')?.blocked).toBe(true);
   });
 
@@ -62,7 +65,7 @@ describe('the three mandate states are genuinely distinct', () => {
 
   it('lets a customer-paused mandate still be nudged — only they hold that switch', () => {
     const t = simulateGates({
-      ...base, action: 'SEND_NUDGE_SMS',
+      ...base, action: 'PAYMENT_LINK_SMS',
       failure_reason: 'mandate_paused_by_customer', hour_ist: 14,
     });
     expect(t.find((e) => e.gate === 'business_paused_no_nudge')?.blocked).toBe(false);
@@ -71,7 +74,7 @@ describe('the three mandate states are genuinely distinct', () => {
 
   it('refuses to nudge a business-paused mandate — the customer was never the blocker', () => {
     const t = simulateGates({
-      ...base, action: 'SEND_NUDGE_WHATSAPP',
+      ...base, action: 'PAYMENT_LINK_WHATSAPP',
       failure_reason: 'mandate_paused_by_business',
     });
     expect(t.find((e) => e.gate === 'business_paused_no_nudge')?.blocked).toBe(true);
@@ -80,12 +83,12 @@ describe('the three mandate states are genuinely distinct', () => {
 
 describe('quiet hours', () => {
   it('blocks a message at 23:00 IST', () => {
-    const t = simulateGates({ ...base, action: 'SEND_NUDGE_SMS', hour_ist: 23 });
+    const t = simulateGates({ ...base, action: 'PAYMENT_LINK_SMS', hour_ist: 23 });
     expect(t.find((e) => e.gate === 'quiet_hours')?.blocked).toBe(true);
   });
 
   it('allows a message inside the RBI-TRAI intersection', () => {
-    const t = simulateGates({ ...base, action: 'SEND_NUDGE_SMS', hour_ist: 11 });
+    const t = simulateGates({ ...base, action: 'PAYMENT_LINK_SMS', hour_ist: 11 });
     expect(t.find((e) => e.gate === 'quiet_hours')?.blocked).toBe(false);
   });
 
