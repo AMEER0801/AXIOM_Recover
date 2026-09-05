@@ -1,4 +1,5 @@
 "use strict";
+require("./load-env"); // must run before any process.env read below
 /* ══════════════════════════════════════════════════════════════
    LLM POLICY — a third arm, held to the same bar as the other two
    ──────────────────────────────────────────────────────────────

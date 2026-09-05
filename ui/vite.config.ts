@@ -5,6 +5,11 @@ import path from 'path'
 
 export default defineConfig({
   plugins: [react()],
+  // GitHub Pages serves a project site from /<repo-name>/, not from the root,
+  // so every asset URL needs that prefix or the page loads blank with 404s in
+  // the console. Local dev and the Node console both serve from the root, so
+  // this stays "/" unless the Pages workflow explicitly sets VITE_BASE.
+  base: process.env.VITE_BASE || '/',
   resolve: { alias: { '@': path.resolve(__dirname, './src') } },
   server: {
     port: 5173,

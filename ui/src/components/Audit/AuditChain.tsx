@@ -1,6 +1,7 @@
 import { useMemo, useState } from 'react';
 import type { AuditEntry, ChainVerification } from '@/types/domain';
 import { timeIST } from '@/services/format';
+import { downloadAuditSeal } from '@/services/api';
 import './audit.css';
 
 /**
@@ -35,6 +36,7 @@ export function AuditChain({
 }) {
   const [filter, setFilter] = useState<'all' | AuditEntry['kind']>('all');
   const [open, setOpen] = useState<number | null>(null);
+  const [exportState, setExportState] = useState<'idle' | 'done' | 'failed'>('idle');
 
   const visible = useMemo(
     () => (filter === 'all' ? entries : entries.filter((e) => e.kind === filter)),
@@ -69,6 +71,13 @@ export function AuditChain({
           <p className="ax-chain__formula figure">
             hash(n) = sha256( seq | ts | hash(n−1) | canonical(payload) )
           </p>
+          {typeof verification.prevented_actions === 'number' && verification.prevented_actions > 0 && (
+            <p className="ax-chain__prevented figure">
+              {verification.prevented_actions} gate vetoes recorded inside these payloads — every
+              action the system REFUSED to take is counted here, read from the chain itself rather
+              than a second counter that could drift from it.
+            </p>
+          )}
         </div>
 
         <div className="ax-chain__side">
@@ -79,6 +88,24 @@ export function AuditChain({
             same seed produces a byte-identical chain. This head is therefore a
             fingerprint of an entire run — different seed, different hash.
           </p>
+          <button
+            className="ax-chain__export"
+            onClick={() => void downloadAuditSeal('run').then((r) => setExportState(r.ok ? 'done' : 'failed'))}
+          >
+            Export audit seal (chain + merkle root)
+          </button>
+          {exportState === 'failed' && (
+            <p className="ax-chain__export-note is-failed">
+              Export failed — the backend on :3000 is not reachable. The seal is built server-side
+              from the live chain, so it cannot be faked offline.
+            </p>
+          )}
+          {exportState === 'done' && (
+            <p className="ax-chain__export-note">
+              Downloaded. Verify it standalone, with nothing from this repo except the script:
+              <code className="figure"> node server/verify-proof.js axiom-audit-seal-*.json</code>
+            </p>
+          )}
         </div>
       </div>
 
@@ -87,10 +114,13 @@ export function AuditChain({
         that entry's hash stops matching its contents; recompute it and the next
         entry's <code>prev_hash</code> stops matching. What this does not defend
         against is someone with write access rewriting the whole file and
-        recomputing every hash from their edit onward. Real tamper-proofing needs
-        an anchor outside the file — signing with a key the writer doesn't hold,
-        or committing the head somewhere append-only. That's the documented
-        upgrade path, not something already here.
+        recomputing every hash from their edit onward. The merkle root in the
+        exported seal is the documented answer to exactly that attack: publish
+        the root anywhere append-only — email it to finance, commit it, notarise
+        it — and any later bundle that verifies internally but commits to a
+        different root is provably not the original. Signing each entry with a
+        key the writer doesn't hold is the full upgrade path, not something
+        already here.
       </p>
 
       {orphanExecutions.length > 0 && (

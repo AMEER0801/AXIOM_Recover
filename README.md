@@ -6,6 +6,61 @@ Built for the Razorpay AI Buildathon, Track 3 (AI Revenue Recovery), with Track 
 
 ---
 
+## The result, and how to reproduce it in ten minutes
+
+Across **20 independently seeded populations**, every arm run on the identical batch under the identical gate configuration:
+
+| | baseline | **AXIOM (final policy)** |
+|---|---|---|
+| Value recovered (₹ recovered ÷ ₹ at risk) | 28.7% | **58.9%** |
+| Paired improvement | — | **+30.19pp, 95% bootstrap CI [23.3, 37.6]** — the interval excludes zero |
+| Batches won | — | **20 / 20** |
+| Mathematical ceiling for this configuration (computed by dynamic programming) | 71.47% | AXIOM captures **82.4%** of what is provably achievable |
+
+The ceiling matters as much as the number above it. A recovery figure with no upper bound is unfalsifiable — 58.9% could be excellent or mediocre and nothing in the number itself tells you which. `oracle-ceiling.js` computes, by dynamic programming over the same frozen customer model, the maximum any policy could reach on this exact configuration. That gives 58.9% a denominator.
+
+**Stability check, run separately at 60 and 155 seeds** (`node console-eval.js --seeds 155`, ~30,000 records — exceeding most published evaluation sample sizes in this field): the point estimate moved under one percentage point (58.9% → 59.4% → 58.4%) while the 95% CI narrowed from 14.3 points wide to 5.5 points wide, staying centred in the same place. More seeds buy precision, not a different answer — exactly what a stable estimator should do. The 20-seed figure above is what's quoted as the headline and what `npm run eval:console` regenerates by default; the larger runs are a stability confirmation, not a replacement number.
+
+```bash
+git clone https://github.com/AMEER0801/AXIOM_Recover && cd AXIOM_Recover/server
+cp .env.example .env
+node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"   # paste into CONTACT_SALT
+
+npm run judge              # ← everything below, run live, in one command
+```
+
+`npm run judge` runs the full suite and prints a scorecard organised around
+the four things this program says it evaluates — problem taste, build
+quality, AI judgment, and failure recovery — with every claim backed by a
+result produced in that same run. The individual commands it wraps:
+
+```bash
+npm test                  # 146 checks
+npm run test:concurrency  # 6 checks — zero double-charge under a 20-request storm
+npm run test:enterprise   # 7 checks — NRV veto, circuit breaker, merkle seal
+npm run check             # frozen model intact + every base rate cited
+npm run recover-final     # the single-seed demo: 24.7% → 52.0%
+npm run eval:console      # the 20-seed headline above (~2 min)
+```
+
+**No runtime dependencies.** Plain Node ≥ 22, nothing to install for the engine.
+
+### The operator console
+
+```bash
+cd ui && npm install && npm run build && cd ../server && npm run console   # → http://localhost:3000
+```
+
+Six screens over the **live engine**, not fixtures: Ledger, Recovery, Gates, Evidence, Live AI, Audit. Full walkthrough in **[`CONSOLE.md`](./CONSOLE.md)**.
+
+### Two numbers, and why they differ
+
+`npm run recover-final` reports **52.0%** on seed 42. The headline is **58.9%**, the mean across 20 seeds. Both are honest; they are different samples. **Quote the 20-seed figure with its interval** — a single seed is an anecdote, and this project's own `eval` prints a warning saying so.
+
+Every arm — baseline, smart, and final — runs under the *same* gate configuration (attempt cap 6, ₹50,000 approval ceiling). An earlier build let the baseline inherit tighter defaults while the final arm ran at the tuned ceiling, which flattered the final arm by handicapping its comparator. That is fixed: the reported gap is attributable to the policy, not to a configuration change.
+
+---
+
 ## What this project does (for everyone)
 
 When a customer's payment fails, or a checkout is abandoned, or an invoice goes unpaid, that money is usually gone unless someone follows up. Doing that follow-up well — at the right time, in the right way, without annoying or overcharging the customer — is hard to do by hand at scale.
@@ -19,6 +74,50 @@ This project is an AI agent that:
 5. **Reports honestly**: not just money recovered, but money recovered *after* subtracting the cost of the outreach and the cost of any customers who were lost because they were contacted too much.
 
 The last point matters most. A system that spams every customer will look great on a simple "amount recovered" chart and be quietly damaging the business. This project measures the version of success that actually matters to a business: **net recovery**, not gross.
+
+---
+
+## How the pieces fit
+
+**Sequential decision-making, not a lookup table.** The recovery decision is not "this failure class maps to this action." `policy-dp.js` plans multi-step ladders with Bellman lookahead over PSRL posterior samples — retry three times on a cooldown, then switch channel, then escalate — because the right *first* action depends on what actions remain available afterward. `bandit.js` runs Thompson sampling over (failure-class × channel) arms, so per-segment conversion is learned rather than assumed. `policy-ev.js` ranks candidates by expected value in paise.
+
+**Unit economics as the ranking rule.** Every candidate action is scored `EV = P(pay) × amount − cost − P(opt-out) × LTV-loss`, with a fatigue-scaled opt-out hazard. `lib/nrv.js` vetoes margin-negative actions and refuses paid channels on sub-₹100 amounts outright. A recovery that costs more than it returns is not a recovery.
+
+**Everything that could hallucinate is physically incapable of moving money.**
+
+- The LLM's output is parsed against a **closed intervention vocabulary** and treated as untrusted input, exactly like a webhook payload. An invalid response is coerced to `NO_ACTION`, never guessed into the nearest valid action.
+- Execution authority lives entirely in deterministic code: the policies propose, `gates.js` disposes — **11 named gates**, each pushing a pass *or* block entry on every call, so a trace never has to be trusted on the absence of failures.
+- The simulator that scores outcomes is **frozen and hash-checked**. `npm run check` fails if it drifts. The agent is measured against a customer model locked before the agent existed.
+
+**Concurrency is proven, not asserted.** `lib/idempotency.js` is an atomic in-flight lock plus outcome cache, wired into the webhook path with real `409`s. `test/concurrency.test.js` fires 20 simultaneous deliveries and asserts exactly one executes; a late duplicate replays the original outcome; a crashed worker's stale lock is taken over after TTL; two different payments don't block each other. Drivable live from the console's Chaos Lab.
+
+**The audit trail is externally verifiable.** SHA-256 hash chain (`audit.js`) where every entry commits to every previous one, plus a **merkle root seal** (`lib/merkle.js`). `server/verify-proof.js` is a standalone, zero-dependency verifier an external auditor runs with nothing else from this repo. Edit one paise in an exported bundle and it fails at the exact sequence number.
+
+### Claims ↔ evidence
+
+Every headline claim is checkable from a fresh clone:
+
+| Claim | Evidence (run it yourself) |
+|---|---|
+| "159 tests, all passing" | `npm test && npm run test:concurrency && npm run test:enterprise` |
+| "Zero double-charge under any webhook concurrency" | `npm run test:concurrency` — 20 simultaneous deliveries, exactly 1 executes; or click it live in the console's Chaos Lab |
+| "Frozen customer model, enforced" | `npm run check` — fails on any drift |
+| "24.7% → 52.0% on seed 42, matched configuration" | `npm run recover-final` — same seed, same number, every time |
+| "28.7% → 58.9% across 20 seeds, CI [23.3, 37.6]pp, 20/20 wins" | `npm run eval:console`, served on the console's Evidence tab with the full provenance panel |
+| "Hash-chained, tamper-evident audit" | Audit tab — or `curl :3000/api/audit` |
+| "The audit seal is externally verifiable, zero dependencies" | Audit tab → Export audit seal → `node server/verify-proof.js <bundle>.json` — then edit one amount and watch it fail at the exact entry |
+| "Real Razorpay Test Mode calls, replay-safe" | Live AI tab (needs `rzp_test_` keys in `server/.env`) — the same (entity, action, attempt) returns the ORIGINAL link, on screen |
+| "Quiet hours are the RBI ∩ TRAI intersection, cited" | `gates.js` header quotes both sources; the Gate Simulator blocks a 21:00 IST WhatsApp live |
+
+### Non-goals — what this deliberately does not claim
+
+- **Not a deployed service.** The console runs locally by design. The deployment story, and the multi-worker lock migration to shared storage, is documented rather than implied to exist.
+- **Not tamper-PROOF.** The chain is tamper-*evident*; the merkle root anchors a published copy against later rewrites. Full non-repudiation needs a signing key the writer doesn't hold — named as the upgrade path, not claimed as shipped.
+- **Not e-mandate auto-debit compliance.** The quiet-hours gate is the conservative intersection of RBI's Fair Practices Code and TRAI's TCCCPR window, cited in `gates.js`. Nothing here claims RBI e-mandate or NPCI window compliance for auto-debits; where sources disagree, the gates take the stricter window.
+- **Not a bank-outage oracle for the NPCI network.** The circuit breaker learns from route-shaped failures in *this merchant's* traffic. It is an in-process guard, honestly scoped, with the shared-state version documented as the scale-out path.
+- **Recovery outcomes are simulated.** `recover.js` runs against the frozen response model in dry-run. The Live AI tab is where real Razorpay Test Mode and real Groq calls happen, and every result there is labelled `LIVE · test mode`, `DRY-RUN`, or `REPLAYED` — never mixed.
+
+---
 
 ## Why this is trustworthy, not just a demo
 
@@ -46,7 +145,12 @@ This is an active build. Here is exactly what is finished and what is not, so th
 | Customer-response model | Simulates how a test customer would respond to each action, locked before agent logic exists | Done, locked |
 | Payment security layer | Verifies that incoming payment notifications are genuinely from Razorpay and not forged | Done, tested |
 | Razorpay connection | Sends requests to Razorpay's test system safely, with no risk of double-charging | Done, tested |
-| Automated tests | 146 checks that confirm the above claims are actually true | All passing |
+| Automated tests | 146 checks in the engine suite + 6 concurrency + 7 enterprise-safeguard checks, all runnable with `npm test && npm run test:concurrency && npm run test:enterprise` | All passing |
+| **Webhook idempotency layer** | Atomic in-flight lock per payment + event-outcome cache; concurrent duplicates get 409, late duplicates get the original outcome replayed — zero double-charge under any concurrency | Done, wired into `index.js`, tested, demoable in Chaos Lab |
+| **Bank circuit breaker** | Rolling-window outage oracle on issuing-bank routes (CLOSED/OPEN/HALF-OPEN, 15-min cooldown, one probe); route-shaped failures only | Done, wired into ingestion + live diagnosis, tested, demoable |
+| **NRV margin gate** | Net Recovery Value pre-flight for live actions; sub-₹100 paid-channel veto; same discipline the engine's EV ranking already enforces in paise | Done, tested, live calculator in Chaos Lab |
+| **Audit seal + standalone verifier** | One-click export of the full chain with its merkle root; `server/verify-proof.js` re-verifies every hash, link and root from the bundle's own bytes, zero dependencies | Done, tamper-detection verified |
+| **Chaos Lab (console)** | Webhook flood, bank flap and NRV demos over the REAL lib code — not a browser re-enactment | Done |
 | Reconciliation engine | Matches payments to settlements, explains gaps, triages what's left | Done, tested |
 | Gate layer (money firewall) | Every bounded/gated guarantee, enforced and unit-tested independently | Done, tested |
 | Recovery loop | Proposes an action, gates it, executes (dry-run), simulates the outcome, hands it to the reconciler | Done, tested |
@@ -66,10 +170,15 @@ flowchart LR
   VER -->|"no"| REJ["reject + audit reason\n(never echoed to caller)"]
   VER -->|"yes"| DEDUPE{"seen before?\nx-razorpay-event-id"}
   DEDUPE -->|"yes"| ACK["200 OK, ignored"]
-  DEDUPE -->|"no"| MAP["toCanonical + classifyFailureReason\nreal Razorpay fields to our schema"]
+  DEDUPE -->|"no"| LOCK{"in-flight lock free?\nlib/idempotency.js"}
+  LOCK -->|"no — concurrent duplicate"| CONFLICT["409 IN_FLIGHT_LOCK_ACTIVE\n(gateway retries in seconds,\nthen hits the outcome cache)"]
+  LOCK -->|"yes"| MAP["toCanonical + classifyFailureReason\nreal Razorpay fields to our schema"]
   MAP --> VALID{"schema valid?"}
   VALID -->|"no"| QUAR["quarantined, counted"]
-  VALID -->|"yes"| LEDGER[("canonical ledger\npaise, hashed contacts")]
+  VALID -->|"yes"| BREAK{"route-shaped failure?\nlib/circuitBreaker.js"}
+  BREAK -->|"issuer/gateway/timeout"| CB["rolling-window breaker\n4 in 120s → OPEN →\nretries suppressed, reroute advised"]
+  BREAK -->|"customer-shaped"| LEDGER[("canonical ledger\npaise, hashed contacts")]
+  CB --> LEDGER
 
   LEDGER --> SETTLED["captured + settlements + refunds"]
   LEDGER --> ATRISK["failed / abandoned / halted / overdue"]
@@ -78,17 +187,78 @@ flowchart LR
   RECON --> LADDER["confidence ladder"]
   LADDER --> UI["ui/ledger.html\ndelta gutter, gap decomposition"]
 
-  ATRISK --> POLICY["recover.js\npropose an action"]
+  ATRISK --> POLICY["recover.js / policy-dp / policy-ev\npropose an action (DP + bandits + EV/NRV)"]
   POLICY --> GATES["gates.js\n11-gate money firewall"]
   GATES --> EXEC["execute\ndry-run by default"]
   EXEC --> SIM["frozen response model\nsimulates the outcome, test mode only"]
   SIM -->|"paid"| EMIT["emit payment_captured\n+ settlement_line"]
   EMIT --> RECON
+  EMIT --> AUDIT["audit.js — hash chain\n+ merkle root, exportable seal"]
 
   SEED["seed.js\ndeterministic batch + answer key"] -.-> LEDGER
 ```
 
 Every arrow above is real, tested, and verified against a fresh clone — the loop that recovers a payment and the loop that reconciles it are no longer two separate halves of a diagram; `recover.js`'s output is literally read back into `recon.js`, and there is a test asserting every recovered payment reconciles cleanly when it is.
+
+---
+
+## Enterprise fintech invariants: the three live-path safeguards
+
+The frozen evaluation engine above answers *"does the policy recover more money, honestly measured?"*. These three safeguards answer the other half of the Track 3 brief — *"can this survive contact with a real payment network?"* All three are zero-dependency, all three are wired into the live ingestion path (`server/index.js`), all three are visible on `/health`, and all three are **drivable live from the console's Chaos Lab tab** — a judge does not have to take a README's word for any of them.
+
+### 1. Atomic webhook idempotency — the zero double-charge guarantee
+
+Upstream gateways retry webhook deliveries by design, and during timeout flaps those retries arrive **concurrently**: twenty deliveries of the same payment in the same millisecond. Without a guard, twenty workers each decide a recovery and each fire it — the double charge.
+
+`lib/idempotency.js` is a two-layer guard:
+
+- **In-flight lock.** The first delivery for a payment acquires it atomically; every concurrent rival gets `409 IN_FLIGHT_LOCK_ACTIVE` immediately (409 is deliberate — it tells the sender "retry", and the retry then hits either the seen-set or the outcome cache). Locks carry a TTL and dead-worker takeover that is *counted*, never silent.
+- **Outcome cache.** Once a delivery completes, its outcome — not merely "seen" — is remembered, so a late duplicate is answered with the original result, byte-for-byte. "Seen" alone would let a second delivery diverge from the first.
+
+```
+node test/concurrency.test.js
+  ✓ 20 simultaneous deliveries → exactly 1 acquires, 19 rejected
+  ✓ duplicate delivery after completion gets the SAME answer, no re-execution
+  ✓ a SECOND storm after the first completes still executes exactly once
+  ✓ a crashed worker's stale lock is taken over after TTL, and counted
+  ✓ two different payments proceed concurrently — the lock scopes per payment
+  ✓ expired results are dropped, not replayed forever
+```
+
+**Honest scope:** single-process, the same trust domain as the engine. Multi-worker deployments need the same two layers over shared state (Redis `SETNX` with TTL, or a DB unique constraint) — documented as the scale-out path, not implied to exist. A SQLite unique constraint (the approach a competing submission takes) gives layer 1 across processes but not layer 2's replay-the-same-answer semantics.
+
+### 2. Net Recovery Value — margin-aware unit economics
+
+Recovery-rate is not profit. A ₹150 drop recovered by a ₹0.90 WhatsApp while carrying a ₹90 churn penalty is a loss with a success metric attached. Every candidate action is priced before it runs:
+
+```
+NRV = P(success) × amount − channel_cost − churn_risk( fatigue × LTV )
+```
+
+The frozen engine implements this as its **native ranking rule** — `policy-ev.js` scores every option `EV = P(pay) × amount − cost − P(opt-out) × LTV-loss` in paise, with Thompson-sampled P and fatigue-scaled opt-out hazard, and refuses to act when the best remaining move loses money. `lib/nrv.js` is the same discipline exposed as the **named live-path gate**: pre-flight verdict before any real action goes out, plus two stated invariants — margin-negative recoveries are vetoed with the arithmetic printed, and **no paid channel ever carries a sub-₹100 recovery** (free rails only). One source of truth per number; the named gate never re-derives what the engine already decided.
+
+### 3. Bank-cluster circuit breaker — NPCI-shaped failure intelligence
+
+When an issuing bank's UPI switch (or NPCI itself) degrades, every retry against that route adds a penalty fee and a success-rate mark while the route is down for *everyone*. The breaker in `lib/circuitBreaker.js` is scoped per route, fed only by **route-shaped** failures (`issuer_down`, `payment_timeout`, `gateway_error` — an expired card never teaches it anything), and runs the classic state machine: 4 failures in a 120-second window → **OPEN**, retries suppressed 15 minutes with a reroute advisory (payment link on a healthy rail instead of a doomed retry), then **HALF-OPEN** for exactly one probe — a failed probe re-opens, a successful one closes.
+
+The breaker instance is **shared** between the ingestion path, the live diagnosis panel and the Chaos Lab — trip HDFC in the lab and the Live AI tab shows the suppression on the next diagnosis of a UPI record with `route=HDFC`. One truth, not three.
+
+### 4. Deterministic guardrails — zero hallucination guarantee
+
+Stated once more because it is the invariant every other guarantee hangs off: **no probabilistic model can trigger a financial transaction in this codebase.** The LLM proposes inside a closed vocabulary; its output is validated like any untrusted webhook payload; the eleven gates in `gates.js` hold absolute veto authority; and every decision — including every veto — is recorded in the hash chain *before* the action, not after.
+
+### 5. Cryptographic audit trail — with an external proof
+
+The chain itself is documented further down (["The audit trail"](#the-audit-trail)). What is new here is the **seal**: `GET /api/audit/export` produces a bundle containing every entry, the chain's head, and a **merkle root computed over all entry hashes** — one hash that commits to the entire run. `server/verify-proof.js` is a standalone, zero-dependency verifier that recomputes every chain hash, every link, and the merkle root from the bundle's own bytes, importing nothing from the engine. Hand the bundle and the script to an external auditor and they need nothing else:
+
+```bash
+node server/verify-proof.js axiom-audit-seal-final-42-r20.json
+  chain           intact (every hash + every link recomputed)
+  merkle root     d94b5884d6d2c808…  ✔ matches the bundle's committed root
+  gate vetoes     325 recorded inside the payloads
+```
+
+The division of labour is the point: the **chain** catches the lazy edit (one changed amount breaks the hash at that sequence); the **published merkle root** catches the determined rewrite (an attacker who recomputes every subsequent hash produces a chain that verifies perfectly internally — and commits to a *different root* than the one that was published). `test/enterprise.test.js` proves both attacks are caught, including the ₹2,500 → ₹2,400 edit that leaves every length and shape intact.
 
 ---
 

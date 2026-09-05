@@ -50,7 +50,7 @@ function freshRzpClient(overrides = {}) {
 const { detectRateDiscrepancies, buildPatternClaims, buildIndividualClaims, renderClaimText, score: discScore, claimId, CLAIM_POLICY } = require("../discrepancy");
 const { CONTRACTED_MDR_BPS, STANDARD_MDR_BPS } = require("../seed");
 const { exportLiveLedger } = require("../export-live-ledger");
-const { execSync } = require("child_process");
+const { execSync, execFileSync } = require("child_process");
 
 async function main() {
   let pass = 0, fail = 0;
@@ -1040,11 +1040,27 @@ await t("buildUserPrompt never includes the raw contact hash or anything beyond 
 });
 
 await t("callModel refuses to run without an API key, rather than silently skipping", async () => {
-  const rec = { amount_paise: 10000, method: "card", failure: { reason: "insufficient_funds" }, customer: { locale: "en" } };
-  await assert.rejects(
-    () => callModel({ record: rec, hist: { count: 0, lastAt: null }, opts: { apiKey: "", skipPacing: true } }),
-    /GROQ_API_KEY/
-  );
+  // This test asserts behaviour for the case where no key is available from
+  // ANY source. opts.apiKey: "" only covers the explicit-argument path —
+  // callModel falls back to process.env.GROQ_API_KEY when opts.apiKey is
+  // falsy, so a real key sitting in the environment (e.g. because
+  // server/.env now actually loads, via load-env.js) would silently make
+  // this test pass for the wrong reason, or fail if a value happens to be
+  // present. Save/clear/restore so this test's result depends only on the
+  // scenario it claims to test, never on whoever's .env happens to be
+  // sitting on disk when `npm test` runs.
+  const savedKey = process.env.GROQ_API_KEY;
+  delete process.env.GROQ_API_KEY;
+  try {
+    const rec = { amount_paise: 10000, method: "card", failure: { reason: "insufficient_funds" }, customer: { locale: "en" } };
+    await assert.rejects(
+      () => callModel({ record: rec, hist: { count: 0, lastAt: null }, opts: { apiKey: "", skipPacing: true } }),
+      /GROQ_API_KEY/
+    );
+  } finally {
+    if (savedKey === undefined) delete process.env.GROQ_API_KEY;
+    else process.env.GROQ_API_KEY = savedKey;
+  }
 });
 
 await t("callModel: a clean, valid model response is accepted", async () => {
@@ -1337,7 +1353,17 @@ await t("recon.js runs on real data with no truth.json, without crashing, and sa
     { event_id: "evt_1", ts: "2026-08-24T17:41:44.000Z", kind: "payment_failed", merchant_id: "unknown", entity: { type: "payment", id: "pay_1" }, customer: { id: "c1", contact_hash: "ch_1", locale: "ta", dnc: false }, amount_paise: 50000, currency: "INR", method: "card", failure: { source: "gateway", step: "payment_authorization", code: "BAD_REQUEST_ERROR", reason: "insufficient_funds" }, attempt_no: 0, raw: {} },
   ];
   fs.writeFileSync(path.join(dir, "ledger.json"), JSON.stringify(realWebhookRecords));
-  const out = execSync(`node ${path.join(__dirname, "..", "recon.js")} --data ${dir}`, { encoding: "utf8" });
+  // execFileSync, not execSync + a template string: execSync builds one shell
+  // command line and hands it to cmd.exe/sh, which splits on whitespace
+  // before Node ever sees it. That works by accident on a path with no
+  // spaces, and breaks on a real Windows folder like
+  // "C:\Mohamed\AUTO AI\Mini MMA\...\server" — cmd.exe cuts the path at the
+  // first space, so `node C:\...\AUTO AI\...` becomes `node C:\...\AUTO`
+  // plus a stray "AI\..." argument, and Node fails with a bare
+  // MODULE_NOT_FOUND naming only the truncated half. execFileSync instead
+  // passes each argument as its own array element with no shell
+  // interpretation in between, so spaces in the path can never split it.
+  const out = execFileSync("node", [path.join(__dirname, "..", "recon.js"), "--data", dir], { encoding: "utf8" });
   assert.ok(out.includes("NO ANSWER KEY"), "should explicitly say there is no truth.json, not crash or fabricate a score");
   assert.ok(!out.includes("ENOENT"), "must not throw the original ENOENT-on-truth.json error");
 });
@@ -1345,7 +1371,7 @@ await t("recon.js runs on real data with no truth.json, without crashing, and sa
 await t("discrepancy.js runs on real data with no truth.json, without crashing, and says so", () => {
   const dir = fs.mkdtempSync(path.join(require("os").tmpdir(), "axiom-live-disc-"));
   fs.writeFileSync(path.join(dir, "ledger.json"), JSON.stringify([]));
-  const out = execSync(`node ${path.join(__dirname, "..", "discrepancy.js")} --data ${dir}`, { encoding: "utf8" });
+  const out = execFileSync("node", [path.join(__dirname, "..", "discrepancy.js"), "--data", dir], { encoding: "utf8" });
   assert.ok(out.includes("NO ANSWER KEY"));
   assert.ok(!out.includes("ENOENT"));
 });
@@ -1355,7 +1381,7 @@ await t("recon.js still scores normally when truth.json IS present — the optio
   const dir = fs.mkdtempSync(path.join(require("os").tmpdir(), "axiom-live-recon-scored-"));
   fs.writeFileSync(path.join(dir, "ledger.json"), JSON.stringify(ledger));
   fs.writeFileSync(path.join(dir, "truth.json"), JSON.stringify(truth));
-  const out = execSync(`node ${path.join(__dirname, "..", "recon.js")} --data ${dir}`, { encoding: "utf8" });
+  const out = execFileSync("node", [path.join(__dirname, "..", "recon.js"), "--data", dir], { encoding: "utf8" });
   assert.ok(out.includes("SCORED AGAINST THE ANSWER KEY"));
   assert.ok(!out.includes("NO ANSWER KEY"));
 });

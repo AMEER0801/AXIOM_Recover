@@ -1,4 +1,5 @@
 "use strict";
+require("./load-env"); // must run before any process.env read below
 /* ══════════════════════════════════════════════════════════════
    RECOVER — the loop that turns infrastructure into an agent
    ──────────────────────────────────────────────────────────────

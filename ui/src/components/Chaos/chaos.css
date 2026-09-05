@@ -1,0 +1,134 @@
+/* Chaos Lab ---------------------------------------------------------- */
+/* Three attack demos over the real server-side safeguards. The styling
+   reuses the console's tokens (see styles/tokens.css) so it reads as
+   part of the same document, not a bolted-on page.                    */
+
+.ax-chaos { display: grid; gap: var(--s-5); }
+
+.ax-chaos__demo { padding: var(--s-4); display: grid; gap: var(--s-4); }
+
+.ax-chaos__head { display: grid; grid-template-columns: 1fr minmax(230px, 280px); gap: var(--s-4); align-items: start; }
+.ax-chaos__head h3 { margin: 0 0 var(--s-2); font-family: var(--font-display); font-size: var(--step-1); }
+.ax-chaos__head p { margin: 0; color: var(--ink-soft); font-size: var(--step--1); max-width: 78ch; }
+.ax-chaos__head p code { font-family: var(--font-figure); font-size: 0.92em; }
+
+.ax-chaos__fire { display: grid; gap: var(--s-3); padding: var(--s-3); border: 1px solid var(--rule); border-radius: var(--radius); background: var(--paper-wash, transparent); }
+.ax-chaos__fire label { display: grid; gap: var(--s-1); font-size: var(--step--1); color: var(--ink-soft); }
+.ax-chaos__fire input[type='range'] { width: 100%; accent-color: var(--gate); }
+.ax-chaos__fire select { width: 100%; }
+
+.ax-chaos__button {
+  justify-self: stretch;
+  background: var(--primary, #528FF0);
+  color: #fff;
+  border: 0;
+  border-radius: var(--radius);
+  padding: var(--s-2) var(--s-3);
+  font-weight: 600;
+  font-size: var(--step--1);
+  cursor: pointer;
+  transition: filter 120ms ease, transform 120ms ease;
+}
+.ax-chaos__button:hover:not(:disabled) { filter: brightness(1.08); }
+.ax-chaos__button:active:not(:disabled) { transform: translateY(1px); }
+.ax-chaos__button:disabled { opacity: 0.55; cursor: progress; }
+
+/* Verdict banner — holds = the tie green, breaks = the gate indigo.
+   A breaker tripping OPEN is the system WORKING, so it shares the
+   "intervention" tone rather than an alarm red. */
+.ax-chaos__verdict {
+  border-left: 4px solid var(--rule-strong);
+  background: transparent;
+  padding: var(--s-3) var(--s-4);
+  display: grid;
+  gap: var(--s-2);
+}
+.ax-chaos__verdict.is-holds { border-left-color: var(--tie); background: var(--tie-wash); }
+.ax-chaos__verdict.is-breaks { border-left-color: var(--gate); background: var(--gate-wash); }
+.ax-chaos__verdict-title { font-family: var(--font-figure); font-weight: 700; font-size: var(--step-0); letter-spacing: 0.01em; }
+.ax-chaos__verdict.is-holds .ax-chaos__verdict-title { color: var(--tie); }
+.ax-chaos__verdict.is-breaks .ax-chaos__verdict-title { color: var(--gate); }
+.ax-chaos__verdict p { margin: 0; font-size: var(--step--1); color: var(--ink-soft); max-width: 80ch; }
+
+/* Proof strip */
+.ax-chaos__proof { display: grid; gap: var(--s-2); }
+.ax-chaos__proof-grid { display: grid; grid-template-columns: repeat(3, minmax(90px, 1fr)) minmax(180px, 2fr); gap: var(--s-3); align-items: baseline; font-size: var(--step--1); }
+.ax-chaos__proof-grid > div { display: grid; gap: 2px; }
+.ax-num { font-size: var(--step-1); font-weight: 700; }
+.ax-num.is-ok { color: var(--tie); }
+.ax-num.is-bad { color: var(--break); }
+.ax-chaos__proof-grid > div > span:last-child { color: var(--ink-faint); font-size: 11px; text-transform: uppercase; letter-spacing: 0.08em; }
+.ax-chaos__proof-note { color: var(--ink-soft); font-size: var(--step--1); }
+
+/* Per-worker log */
+.ax-chaos__log summary { cursor: pointer; font-size: var(--step--1); color: var(--ink-soft); }
+.ax-chaos__log[open] summary { margin-bottom: var(--s-2); }
+.ax-chaos__workers { list-style: none; margin: 0; padding: 0; max-height: 280px; overflow-y: auto; border: 1px solid var(--rule); border-radius: var(--radius); }
+.ax-chaos__worker {
+  display: grid;
+  grid-template-columns: 34px minmax(180px, 220px) 76px 1fr;
+  gap: var(--s-2);
+  padding: 4px var(--s-2);
+  border-bottom: 1px solid var(--rule);
+  font-size: 12px;
+  align-items: baseline;
+}
+.ax-chaos__worker:last-child { border-bottom: 0; }
+.ax-chaos__worker.is-acquired_lock { background: var(--tie-wash); box-shadow: inset 3px 0 0 var(--tie); }
+.ax-chaos__worker.is-rejected_in_flight .ax-chaos__w-status { color: var(--ink-faint); }
+.ax-chaos__worker.is-idempotent_cached .ax-chaos__w-status { color: var(--gate); }
+.ax-chaos__w-id { color: var(--ink-faint); }
+.ax-chaos__w-detail { color: var(--ink-soft); }
+.ax-chaos__offline { margin: 0; font-size: var(--step--1); color: var(--break); }
+
+/* Bank-flap timeline */
+.ax-chaos__timeline { display: grid; gap: var(--s-2); }
+.ax-chaos__steps { list-style: none; margin: 0; padding: 0; display: grid; gap: 4px; }
+.ax-chaos__step {
+  display: grid;
+  grid-template-columns: 24px minmax(240px, 1fr) 90px 1fr;
+  gap: var(--s-2);
+  align-items: baseline;
+  padding: 4px var(--s-2);
+  border: 1px solid var(--rule);
+  border-radius: var(--radius);
+  font-size: 12px;
+}
+.ax-chaos__step.is-open { border-color: var(--gate); background: var(--gate-wash); }
+.ax-chaos__step-n { color: var(--ink-faint); }
+.ax-chaos__step-event { font-weight: 600; }
+.ax-chaos__step-note { color: var(--ink-soft); }
+.ax-chaos__shared { margin: 0; font-size: 11px; color: var(--ink-faint); max-width: 80ch; }
+.ax-chaos__shared code { font-family: var(--font-figure); }
+
+/* Reroute advisory */
+.ax-chaos__reroute { display: grid; gap: var(--s-2); padding: var(--s-3); border: 1px dashed var(--gate); border-radius: var(--radius); }
+.ax-chaos__reroute-main { margin: 0; font-size: var(--step--1); color: var(--ink); max-width: 82ch; }
+.ax-chaos__reroute-main code { font-family: var(--font-figure); font-weight: 600; }
+.ax-chaos__reroute-cost { margin: 0; color: var(--tie); font-weight: 600; font-size: var(--step--1); }
+
+/* NRV calculator */
+.ax-chaos__nrv-grid { display: grid; grid-template-columns: minmax(240px, 300px) 1fr; gap: var(--s-4); align-items: start; }
+.ax-chaos__nrv-controls { display: grid; gap: var(--s-3); padding: var(--s-3); border: 1px solid var(--rule); border-radius: var(--radius); }
+.ax-chaos__nrv-controls label { display: grid; gap: var(--s-1); font-size: var(--step--1); color: var(--ink-soft); }
+.ax-chaos__nrv-controls input[type='range'] { width: 100%; accent-color: var(--gate); }
+
+.ax-chaos__nrv-math { display: grid; gap: var(--s-1); margin: 0; font-size: var(--step--1); }
+.ax-chaos__nrv-math > div { display: flex; justify-content: space-between; gap: var(--s-4); border-bottom: 1px dashed var(--rule); padding-bottom: 2px; }
+.ax-chaos__nrv-math dt { color: var(--ink-soft); }
+.ax-chaos__nrv-math dd { margin: 0; font-weight: 600; }
+.ax-chaos__nrv-total { border-bottom: 0; }
+.ax-chaos__nrv-total dt { font-weight: 700; color: var(--ink); }
+.ax-chaos__nrv-total dd { font-size: var(--step-1); }
+.ax-chaos__nrv-formula { margin: var(--s-2) 0 0; font-size: 11px; color: var(--ink-faint); }
+
+@media (max-width: 980px) {
+  .ax-chaos__head { grid-template-columns: 1fr; }
+  .ax-chaos__nrv-grid { grid-template-columns: 1fr; }
+  .ax-chaos__proof-grid { grid-template-columns: repeat(3, 1fr); }
+  .ax-chaos__proof-note { grid-column: 1 / -1; }
+  .ax-chaos__worker { grid-template-columns: 30px 1fr 70px; }
+  .ax-chaos__w-detail { grid-column: 1 / -1; padding-left: 38px; }
+  .ax-chaos__step { grid-template-columns: 20px 1fr 80px; }
+  .ax-chaos__step-note { grid-column: 1 / -1; padding-left: 28px; }
+}

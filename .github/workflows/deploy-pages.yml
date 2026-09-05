@@ -1,0 +1,93 @@
+# ══════════════════════════════════════════════════════════════
+#  Deploy the operator console to GitHub Pages.
+#
+#  Why Pages and not a server host: the console's UI already ships
+#  an honest offline path. services/api.ts tries /api/<route> and,
+#  when there is no backend to answer, falls back to labelled
+#  fixture data and marks the source as "fixture" rather than
+#  "live" — the banner says so on screen. So a static deploy is
+#  not a fake demo; it is the same UI, truthfully telling the
+#  reader it has no engine behind it.
+#
+#  What this buys over a container host: no cold start. A free
+#  Render/Railway instance sleeps after ~15 minutes idle and takes
+#  roughly 50 seconds to wake, which is exactly the wrong thing to
+#  happen when a reviewer with hundreds of repos to get through
+#  clicks your link. Pages is a CDN — it is instant, free, and
+#  stays up whether or not anything else is running.
+#
+#  What it deliberately does NOT do: the Chaos Lab's concurrency
+#  storm, the Live AI panel's real Razorpay Test Mode calls, and
+#  the audit export all need the Node process. Those stay local,
+#  which is honest — they are the parts that genuinely require a
+#  server, and the UI already labels them as unavailable rather
+#  than faking a result.
+#
+#  Setup, once: repo → Settings → Pages → Source: "GitHub Actions".
+#  After that every push to main redeploys automatically.
+# ══════════════════════════════════════════════════════════════
+
+name: Deploy console to Pages
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch: # lets you redeploy by hand from the Actions tab
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# Never let two deploys race. If you push twice quickly, the newer
+# run wins and the older is cancelled rather than both writing.
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      # Fail loudly here rather than shipping a broken console. If the
+      # engine suite is red, the deploy should not happen at all.
+      - name: Verify the engine still passes
+        working-directory: server
+        run: |
+          npm test
+          npm run test:concurrency
+          npm run test:enterprise
+          npm run check
+
+      - name: Build the console
+        working-directory: ui
+        env:
+          # Must match the repository name exactly, including case, with
+          # slashes on both sides. Wrong value here is the single most
+          # common cause of a blank Pages site.
+          VITE_BASE: /AXIOM_Recover/
+        run: |
+          npm ci
+          npm run build
+
+      - uses: actions/configure-pages@v5
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: ui/dist
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4

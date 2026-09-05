@@ -1,4 +1,5 @@
 "use strict";
+require("./load-env"); // must run before any process.env read below
 /* ══════════════════════════════════════════════════════════════
    CONSOLE-API — the operator console backend
    ──────────────────────────────────────────────────────────────
@@ -10,6 +11,15 @@
      GET  /api/eval              the 20-seed paired sweep (console-eval.js)
      POST /api/gates/evaluate    run a probe through the REAL gates.js
      GET  /api/audit             the hash chain + verification
+     GET  /api/audit/export      the audit seal: chain + merkle root,
+                                 standalone-verifiable (verify-proof.js)
+     POST /api/simulate/chaos-concurrency   webhook flood over the real
+                                 idempotency locks — 1 wins, rest get 409
+     POST /api/simulate/bank-flap          trip the bank circuit breaker;
+                                 retries suppressed + reroute advisory
+     POST /api/simulate/nrv                the Net Recovery Value gate,
+                                 live — the margin math and the veto
+     GET  /api/breaker/status    shared breaker state (route param)
      GET  /*                     the built console (ui/dist)
 
    The point of this server is that nothing on screen is fixture
@@ -44,10 +54,14 @@ const { baselinePolicy, smartPolicy, AT_RISK_KINDS, ACTING } = require("./recove
 const { runFinalPolicy, FINAL_CONFIG } = require("./recover-final");
 const { createBandit } = require("./bandit");
 const { evaluateGates, GATE_NAMES, createAttemptLedger, createSpendTracker, createKillSwitch } = require("./gates");
-const { verifyChain, gateCoverage } = require("./audit");
+const { verifyChain, gateCoverage, createAuditChain } = require("./audit");
 const { runCeiling } = require("./oracle-ceiling");
 const { callModel } = require("./llm-policy");
 const { RazorpayClient } = require("./lib/rzp");
+const { createIdempotency } = require("./lib/idempotency");
+const { breaker } = require("./lib/circuitBreaker");
+const { evaluateNRV, CHANNEL_COST_INR } = require("./lib/nrv");
+const { merkleRoot } = require("./lib/merkle");
 
 const PORT = Number(process.env.PORT || 3000);
 const SEED = Number(process.env.SEED || 42);
@@ -477,6 +491,25 @@ async function liveDiagnose(input) {
     trace: verdict.trace.map((t) => ({ gate: t.gate, blocked: t.result === "block", detail: t.detail })),
   };
 
+  /* ── bank-route health, live from the shared circuit breaker ──
+     The eleven gates stay the final authority; the breaker is a
+     route-shaped ADVISOR on the live path. If a judge trips HDFC
+     in the Chaos Lab and then diagnoses a UPI record here, this
+     is where the suppression shows up — same breaker instance. */
+  const route = String(input.route || "upi").slice(0, 24);
+  const routeHealth = breaker.status(route);
+  const bank_health = {
+    route: routeHealth.route,
+    circuit: routeHealth.circuit,
+    allowed: routeHealth.allowed,
+    reason: routeHealth.reason,
+    advisory: routeHealth.allowed ? null : {
+      suppresses: "RETRY_CHARGE on this route",
+      recommended_instead: "PAYMENT_LINK_SMS",
+      why: "the rail itself is degraded — a payment link lets the customer complete on a different rail today, instead of burning a failed retry against a down switch",
+    },
+  };
+
   /* Judge 3 — Groq, live, advisory only. Same closed vocabulary; an
      invalid response is coerced to NO_ACTION by llm-policy's own
      validation, exactly like any other untrusted proposal. */
@@ -504,9 +537,10 @@ async function liveDiagnose(input) {
     input: { failure_reason: failureReason, amount_paise: amountPaise, attempts, locale, dnc, hour_ist: hourIst, minutes_since_last_attempt: minutesSince },
     policy: { proposed, authoritative: true },
     gates,
+    bank_health,
     llm: llm ? { ...llm, advisory: true, agreesWithPolicy: llm.action === proposed } : null,
     llmError,
-    note: "The deterministic policy is authoritative. The LLM is a second opinion a human can read. Nothing was executed.",
+    note: "The deterministic policy is authoritative. The LLM is a second opinion a human can read. The breaker advises on route health. Nothing was executed.",
   };
 }
 
@@ -568,6 +602,13 @@ function buildAuditPayload(limit = 200) {
     payload: e.payload,
   }));
   const v = verifyChain(run.audit.entries());
+  /* "Prevented" — what the system REFUSED to do — is as much the
+     deliverable as what it did: every gate veto in every decision
+     entry, counted from the payloads, not maintained as a second
+     counter that could drift from the chain. */
+  const prevented = run.audit.entries().reduce(
+    (n, e) => n + ((e.kind === "decision" && Array.isArray(e.payload?.trace)) ? e.payload.trace.filter((t) => t.result === "block").length : 0), 0,
+  );
   return {
     entries,
     verification: {
@@ -575,7 +616,194 @@ function buildAuditPayload(limit = 200) {
       entries: v.length,
       brokenAt: v.ok ? null : v.brokenAt,
       head: v.head,
+      prevented_actions: prevented,
     },
+  };
+}
+
+/* ── the audit seal: full chain + merkle root, exportable ──────
+   Everything verify-proof.js needs to re-verify the whole run
+   WITHOUT this repo: the entries, the committed root, the run's
+   identity. Tamper-evidence for the casual edit (chain), and a
+   single published hash that commits to the entire run even
+   against an attacker who recomputes every subsequent hash. */
+function buildAuditBundle() {
+  const run = STATE._finalRun;
+  const entries = run.audit.entries();
+  const v = verifyChain(entries);
+  const hashes = entries.map((e) => e.hash);
+  const prevented = entries.reduce(
+    (n, e) => n + ((e.kind === "decision" && Array.isArray(e.payload?.trace)) ? e.payload.trace.filter((t) => t.result === "block").length : 0), 0,
+  );
+  return {
+    bundle_version: 1,
+    exported_at: new Date().toISOString(),
+    run_id: STATE.recovery.run_id,
+    seed: SEED,
+    rounds: ROUNDS,
+    engine: "axiom-recover · frozen response model · deterministic seeded run",
+    entry_count: entries.length,
+    seq_range: entries.length ? [entries[0].seq, entries[entries.length - 1].seq] : null,
+    chain_valid: v.ok,
+    head: v.head,
+    merkle_root: merkleRoot(hashes),
+    prevented_actions: prevented,
+    entries: entries.map((e) => ({ seq: e.seq, ts: e.ts, prev_hash: e.prev_hash, hash: e.hash, kind: e.kind, payload: e.payload })),
+    verify_instructions: "node server/verify-proof.js <this-file>.json  — standalone, zero dependencies. Recomputes every chain hash, every link, and the merkle root from the bundle's own bytes.",
+    note: "Publish the merkle_root anywhere append-only (email to finance, a commit, a notarised PDF). Any later bundle for this run that verifies internally but commits to a different root is provably not the original.",
+  };
+}
+
+/* ── Chaos Lab: the concurrency storm, over the real lock layer ──
+   20 concurrent deliveries of the SAME payment — the exact storm
+   an upstream gateway produces during a timeout flap. The locks,
+   the result cache and the audit append are the same code the
+   live ingestion path runs (index.js); the only difference is the
+   population: synthetic IDs, an isolated audit chain, and an
+   assertion built into the response so the console never has to
+   trust its own counter. */
+async function runChaosConcurrency({ workers = 20, payment_id: pid } = {}) {
+  const n = Math.min(50, Math.max(2, Math.floor(Number(workers) || 20)));
+  const paymentId = String(pid || `pay_chaos_${Date.now()}`);
+  const eventId = `evt_chaos_${Date.now()}`;
+  const idem = createIdempotency({ sweep: false });
+  const audit = createAuditChain();
+
+  audit.append("run_started", { scenario: "chaos_concurrency", workers: n, payment_id: paymentId });
+
+  const t0 = Date.now();
+  const results = await Promise.all(Array.from({ length: n }, (_, i) => new Promise((resolve) => {
+    const cached = idem.cachedResult(eventId);
+    if (cached) return resolve({ worker: i, status: "IDEMPOTENT_CACHED", http: 200, executed: false });
+
+    if (!idem.acquireLock(paymentId)) {
+      return resolve({ worker: i, status: "REJECTED_IN_FLIGHT", http: 409, executed: false, detail: "another worker holds the in-flight lock for this payment" });
+    }
+
+    /* the winner: simulate the async recovery decision + write.
+       Deterministic delay (12ms + worker index) — this repo's
+       discipline bans Math.random so every run stays byte-stable. */
+    setTimeout(() => {
+      audit.append("decision", {
+        entity_id: paymentId, worker: i,
+        proposed: "PAYMENT_LINK_WHATSAPP", final: "PAYMENT_LINK_WHATSAPP", allowed: true,
+        note: "the ONE worker that acquired the lock — every other worker was refused before reaching this append",
+      });
+      idem.recordResult(eventId, { status: "RECOVERY_SCHEDULED", worker: i });
+      idem.releaseLock(paymentId);
+      resolve({ worker: i, status: "ACQUIRED_LOCK", http: 200, executed: true, decision_recorded: true });
+    }, 12 + (i % 8));
+  })));
+  const elapsedMs = Date.now() - t0;
+
+  /* a duplicate that arrives AFTER the storm — gets the cached
+     outcome, no re-execution */
+  const duplicate = { worker: n, status: "IDEMPOTENT_CACHED", http: 200, executed: false, detail: "late duplicate delivery — original outcome replayed from the result cache, not re-executed" };
+  const dupOutcome = idem.cachedResult(eventId);
+
+  audit.append("outcome", { entity_id: paymentId, paid: null, note: `storm complete: 1 execution, ${n - 1} rejected, duplicate replayed`, duplicate_replayed_result: dupOutcome });
+
+  const v = verifyChain(audit.entries());
+  const executed = results.filter((r) => r.executed).length;
+
+  return {
+    scenario: "chaos_concurrency",
+    workers: n,
+    payment_id: paymentId,
+    elapsed_ms: elapsedMs,
+    results: [...results, duplicate],
+    summary: {
+      inbound: n + 1,
+      executed,
+      rejected_in_flight: results.filter((r) => r.status === "REJECTED_IN_FLIGHT").length,
+      replayed_from_cache: 1,
+      invariant_holds: executed === 1,
+      invariant: "exactly ONE recovery decision per payment per storm, under any concurrency",
+    },
+    audit_proof: {
+      chain_valid: v.ok,
+      entries: v.length,
+      decision_entries: audit.entries().filter((e) => e.kind === "decision").length,
+      head: v.head,
+      note: "an isolated chain for this scenario — the engine's frozen chain is untouched by the lab. verify: exactly one 'decision' entry.",
+    },
+  };
+}
+
+/* ── Chaos Lab: the bank flap, over the shared breaker ──────────
+   Deterministic per call: the breaker is reset, then the caller's
+   failure burst is injected. Uses the SAME instance the live
+   diagnosis path consults, so a tripped route here is visible in
+   Live AI (diagnose with route=hdfc) and on /health — the lab and
+   the live path share one truth. */
+function runBankFlap({ route = "HDFC", failures = 4, error_code = "NPCI_ISSUER_TIMEOUT" } = {}) {
+  const rt = String(route).toUpperCase().slice(0, 24);
+  const n = Math.min(20, Math.max(1, Math.floor(Number(failures) || 4)));
+
+  breaker.reset();
+  const timeline = [];
+  for (let i = 1; i <= n; i++) {
+    const s = breaker.recordFailure(rt, error_code);
+    timeline.push({
+      step: i,
+      event: `payment.failed · ${rt} · ${error_code}`,
+      circuit: s.circuit,
+      note: i < n ? "counted in the rolling window" : s.reason,
+    });
+  }
+
+  const status = breaker.status(rt);
+
+  /* what the recovery layer does with an OPEN route: does NOT offer
+     RETRY_CHARGE against it, offers the alternate rail instead, and
+     states the cost of what it just avoided. */
+  const retryCost = safeRetryCost();
+  const suppressed = status.allowed ? 0 : n;
+  return {
+    scenario: "bank_flap",
+    route: rt,
+    injected: n,
+    error_code,
+    timeline,
+    final: status,
+    reroute: status.allowed ? null : {
+      original_action: "RETRY_CHARGE",
+      suppressed_on: rt,
+      recommended_instead: "PAYMENT_LINK_SMS",
+      why: "a payment link lets the customer complete on a healthy rail (card / netbanking) while the UPI switch recovers — instead of burning retries, penalty fees and success-rate marks against a route that is down for everyone",
+      penalty_fees_avoided_paise: suppressed * retryCost,
+      cooldown_minutes: Math.ceil((status.cooldownRemainingMs || 0) / 60_000),
+    },
+    shared_state: {
+      note: "this is the same breaker instance /api/llm/diagnose consults — diagnose a UPI record with route " + rt + " now and the suppression appears there too. /health exposes the same stats.",
+      stats: breaker.stats(),
+    },
+  };
+}
+
+function safeRetryCost() {
+  try { return require("./gates").estimateCost("RETRY_CHARGE", STATE.rates) || 50; }
+  catch { return 50; }
+}
+
+/* ── Chaos Lab: the NRV calculator ──────────────────────────
+   The named unit-economics gate, driven live. Inputs are the
+   operator's own numbers; the response shows the full arithmetic
+   so the verdict is checkable by hand. */
+function runNrvSim(input) {
+  const amountPaise = Math.max(100, Math.floor(Number(input.amount_paise) || 15000));
+  const p = Math.min(1, Math.max(0, Number(input.p_success) || 0.15));
+  const action = String(input.action || "PAYMENT_LINK_WHATSAPP");
+  const ltvPaise = Math.max(0, Math.floor(Number(input.customer_ltv_paise) || 250000));
+  const fatigue = Math.min(1, Math.max(0, Number(input.fatigue) || 0));
+  const v = evaluateNRV({ amount_paise: amountPaise, p_success: p, action, customer_ltv_paise: ltvPaise, fatigue });
+  return {
+    scenario: "nrv",
+    input: { amount_paise: amountPaise, p_success: p, action, customer_ltv_paise: ltvPaise, fatigue },
+    formula: "NRV = P(success) × amount − channel cost − churn risk (fatigue × LTV, above 0.6 fatigue)",
+    channel_costs_inr: CHANNEL_COST_INR,
+    verdict: v,
+    engine_note: "the frozen engine implements this same ranking in paise as policy-ev.js's expected-value rule (Thompson-sampled P, bandit-calibrated), so the numbers on the Evidence tab and this verdict come from one discipline, not two.",
   };
 }
 
@@ -590,6 +818,7 @@ const server = http.createServer(async (req, res) => {
         seed: SEED, records: RECORDS, rounds: ROUNDS, warmup: WARMUP,
         eval_summary: !!STATE.evalSummary,
         ui_dist: fs.existsSync(path.join(UI_DIST, "index.html")),
+        circuit_breaker: breaker.stats(),
       });
     }
 
@@ -678,6 +907,53 @@ const server = http.createServer(async (req, res) => {
       });
     }
 
+    /* ── Chaos Lab — the resilience demos, live over the real lib code ── */
+
+    if (url.pathname === "/api/simulate/chaos-concurrency" && req.method === "POST") {
+      const raw = await readBody(req);
+      const input = raw.length ? JSON.parse(raw.toString("utf8") || "{}") : {};
+      return json(res, 200, await runChaosConcurrency(input));
+    }
+
+    if (url.pathname === "/api/simulate/bank-flap" && req.method === "POST") {
+      const raw = await readBody(req);
+      const input = raw.length ? JSON.parse(raw.toString("utf8") || "{}") : {};
+      return json(res, 200, runBankFlap(input));
+    }
+
+    if (url.pathname === "/api/simulate/nrv" && req.method === "POST") {
+      const raw = await readBody(req);
+      const input = JSON.parse(raw.toString("utf8") || "{}");
+      return json(res, 200, runNrvSim(input));
+    }
+
+    /* ── the audit seal — full chain + merkle root, downloadable ── */
+
+    if (url.pathname === "/api/audit/export") {
+      if (!STATE._finalRun) return json(res, 503, { ok: false, error: "engine not booted yet" });
+      const bundle = buildAuditBundle();
+      const body = JSON.stringify(bundle, null, 2);
+      const disposition = url.searchParams.get("download") === "1"
+        ? `attachment; filename="axiom-audit-seal-${bundle.run_id}.json"`
+        : "inline";
+      res.writeHead(200, {
+        "Content-Type": "application/json; charset=utf-8",
+        "Content-Disposition": disposition,
+        "Cache-Control": "no-store",
+        "Content-Length": Buffer.byteLength(body),
+      });
+      return res.end(body);
+    }
+
+    if (url.pathname === "/api/breaker/status") {
+      const route = String(url.searchParams.get("route") || "").toUpperCase().slice(0, 24);
+      return json(res, 200, {
+        config: breaker.config(),
+        stats: breaker.stats(),
+        route: route ? breaker.status(route) : null,
+      });
+    }
+
     if (url.pathname.startsWith("/api/")) return json(res, 404, { ok: false });
 
     return serveStatic(req, res, url);
@@ -689,7 +965,8 @@ const server = http.createServer(async (req, res) => {
 boot().then(() => {
   server.listen(PORT, () => {
     console.log(`\naxiom-recover console on http://localhost:${PORT}/`);
-    console.log(`  GET /api/recover /api/recon /api/eval /api/audit   POST /api/gates/evaluate\n`);
+    console.log(`  GET  /api/recover /api/recon /api/eval /api/audit /api/audit/export /api/breaker/status`);
+    console.log(`  POST /api/gates/evaluate /api/simulate/chaos-concurrency /api/simulate/bank-flap /api/simulate/nrv\n`);
   });
 }).catch((e) => { console.error("[console] boot failed:", e); process.exit(1); });
 

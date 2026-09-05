@@ -8,6 +8,7 @@
   },
   "type": "commonjs",
   "scripts": {
+    "judge": "node judge.js",
     "start": "node index.js",
     "seed": "node seed.js --seed 42 --records 200 --out ./data",
     "freeze": "node freeze.js",
@@ -36,7 +37,10 @@
     "approval-sweep": "node approval-rate-sweep.js --seed 42 --records 200 --rounds 8",
     "recover-final": "node recover-final.js --seed 42 --records 200 --rounds 20 --warmup 8",
     "console": "node console-api.js",
-    "eval:console": "node console-eval.js --seeds 20"
+    "eval:console": "node console-eval.js --seeds 20",
+    "test:concurrency": "node test/concurrency.test.js",
+    "test:enterprise": "node test/enterprise.test.js",
+    "audit:verify": "node verify-proof.js"
   },
   "dependencies": {}
 }

@@ -19,6 +19,7 @@ const ICONS = {
   gates:    ico('M12 3l8 3v6c0 4.4-3.4 7.9-8 9-4.6-1.1-8-4.6-8-9V6l8-3zM9 12l2 2 4-4'),
   evidence: ico('M4 20V10M10 20V4M16 20v-8M22 20H2'),
   audit:    ico('M9 12l2 2 4-4m5 2a9 9 0 1 1-1.9-5.5L21 3M21 8v5h-5'),
+  chaos:    ico('M13 2L3 14h7l-1 8 10-12h-7l1-8z'),
   live:     ico('M12 3l1.8 4.6L18 9l-4.2 1.4L12 15l-1.8-4.6L6 9l4.2-1.4L12 3zM19 15l.9 2.3 2.3.9-2.3.9L19 21l-.9-2.3-2.3-.9 2.3-.9L19 15z'),
   sun:      ico('M12 7a5 5 0 1 0 0 10 5 5 0 0 0 0-10zM12 1v2M12 21v2M4.2 4.2l1.4 1.4M18.4 18.4l1.4 1.4M1 12h2M21 12h2M4.2 19.8l1.4-1.4M18.4 5.6l1.4-1.4'),
   moon:     ico('M21 12.8A9 9 0 1 1 11.2 3 7 7 0 0 0 21 12.8z'),
@@ -184,13 +185,14 @@ export interface ProviderStatus { configured: boolean; detail?: string; }
 /* Tabs                                                                  */
 /* ------------------------------------------------------------------ */
 
-export type TabId = 'ledger' | 'recovery' | 'gates' | 'metrics' | 'liveai' | 'audit';
+export type TabId = 'ledger' | 'recovery' | 'gates' | 'metrics' | 'chaos' | 'liveai' | 'audit';
 
 const TABS: { id: TabId; label: string; note: string; icon: IconName }[] = [
   { id: 'ledger',   label: 'Ledger',   note: 'Settlement reconciliation',   icon: 'ledger' },
   { id: 'recovery', label: 'Recovery', note: 'Policy execution runs',      icon: 'recovery' },
   { id: 'gates',    label: 'Gates',    note: 'The money firewall',         icon: 'gates' },
   { id: 'metrics',  label: 'Evidence', note: 'Multi-seed statistics',      icon: 'evidence' },
+  { id: 'chaos',    label: 'Chaos Lab',note: 'Attack it yourself',          icon: 'chaos' },
   { id: 'liveai',   label: 'Live AI',  note: 'Groq diagnosis + Test Mode', icon: 'live' },
   { id: 'audit',    label: 'Audit',    note: 'Hash-chained decisions',     icon: 'audit' },
 ];
@@ -200,6 +202,7 @@ export const TAB_TITLES: Record<TabId, { title: string; sub: string }> = {
   recovery: { title: 'Recovery', sub: 'Propose, gate, execute, reconcile' },
   gates:    { title: 'Gates', sub: 'The money firewall, hands-on' },
   metrics:  { title: 'Evidence', sub: 'Three arms, and how stable each claim is' },
+  chaos:    { title: 'Chaos Lab', sub: 'Race it, trip it, veto it — then watch it hold' },
   liveai:   { title: 'Live AI', sub: 'The agent thinks. The policy still decides.' },
   audit:    { title: 'Audit', sub: 'Hash-chained record of every decision' },
 };

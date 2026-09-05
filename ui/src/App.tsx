@@ -8,6 +8,7 @@ import { RecoveryRibbon } from '@/components/Recovery/RecoveryRibbon';
 import { GateSimulator } from '@/components/Gates/GateSimulator';
 import { AuditChain } from '@/components/Audit/AuditChain';
 import { LivePanel } from '@/components/LiveAI/LivePanel';
+import { ChaosLab } from '@/components/Chaos/ChaosLab';
 
 /**
  * Evidence is the only screen that needs a charting library (~150kB gzipped).
@@ -94,6 +95,15 @@ export default function App() {
                     <Evidence run={recovery.data} evalSummary={evalSum.data} />
                   </Suspense>
                 )}
+            </Section>
+          )}
+
+          {tab === 'chaos' && (
+            <Section
+              title="Race it, trip it, veto it — then watch it hold"
+              lede="Every claim the README makes about resilience is drivable from this screen: a twenty-delivery webhook storm against the atomic in-flight locks, a bank-switch outage against the rolling-window circuit breaker, and the Net Recovery Value math that decides a recovery is only worth doing when the merchant's margin survives it. These are the real server-side safeguards — the same lib/ code the live ingestion path runs — not a browser re-enactment."
+            >
+              <ChaosLab />
             </Section>
           )}
 

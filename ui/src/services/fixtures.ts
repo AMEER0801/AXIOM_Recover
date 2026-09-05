@@ -255,6 +255,7 @@ const chainVerification: ChainVerification = {
   entries: auditEntries.length,
   brokenAt: null,
   head: recoveryRun.audit_head,
+  prevented_actions: 12,
 };
 
 export const fixtures = {

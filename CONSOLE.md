@@ -53,7 +53,7 @@ GROQ_API_KEY=gsk_...                # console.groq.com/keys — free, no card
 - `Ping API` is a real `GET /v1/payments?count=1` — one honest round-trip
   proving the credentials and network before anything else happens.
 
-## The six screens
+## The seven screens
 
 | Tab | What a reviewer sees | Engine surface |
 |---|---|---|
@@ -61,8 +61,31 @@ GROQ_API_KEY=gsk_...                # console.groq.com/keys — free, no card
 | **Recovery** | One track per at-risk record, one cell per round; click any record for the full **11-gate trace** behind every decision — including the gates that passed | `recover2.js` + audit `decision` entries |
 | **Gates** | The money firewall, hands-on. Presets engineered to trip exactly one gate; every probe is evaluated by the **real `gates.js`** on the server (the browser mirror only runs when offline, and says so) | `gates.js` |
 | **Evidence** | Value-recovery deltas (the Track 3 bar metric), 20-seed paired bootstrap CIs, the DP-computed oracle ceiling, full provenance — seeds, warm-up split, regenerate command | `console-eval.js` |
-| **Live AI** | One case → three judges: the deterministic policy (authoritative), the eleven gates (what may actually run), and **Groq live** (advisory, agrees/disagrees). Plus a **real Razorpay Test Mode** payment link with an on-screen idempotency replay | `recover.js` policy + `gates.js` + `llm-policy.js` + `lib/rzp.js` |
-| **Audit** | The hash chain, verified on every request; decision-before-execution invariant checked in the browser | `audit.js` |
+| **Chaos Lab** | Attack the safeguards yourself: a **webhook flood** (20 concurrent deliveries → 1 executes, 19 get 409, 1 replayed from cache, with the scenario's audit chain as proof), a **bank flap** (4 route failures → circuit OPEN, retries suppressed, reroute advisory, penalty fees avoided), and the **NRV calculator** (margin math with the veto, live). All three run over the REAL `lib/` code the live path uses — no browser re-enactment, no fixture fallback | `lib/idempotency.js` + `lib/circuitBreaker.js` + `lib/nrv.js` + `audit.js` |
+| **Live AI** | One case → three judges: the deterministic policy (authoritative), the eleven gates (what may actually run), and **Groq live** (advisory, agrees/disagrees). Plus a **real Razorpay Test Mode** payment link with an on-screen idempotency replay. Diagnosing with a route the Chaos Lab tripped shows the breaker's suppression here too — one shared truth | `recover.js` policy + `gates.js` + `llm-policy.js` + `lib/rzp.js` + `lib/circuitBreaker.js` |
+| **Audit** | The hash chain, verified on every request; decision-before-execution invariant checked in the browser; **325 gate vetoes counted from the payloads** (what the system refused to do); **Export audit seal** → a bundle with the merkle root that `node server/verify-proof.js <file>.json` verifies standalone, zero dependencies | `audit.js` + `lib/merkle.js` + `verify-proof.js` |
+
+## The resilience demos (Chaos Lab)
+
+The three attacks and what each proves:
+
+- **Inject N concurrent webhooks.** Fires N simultaneous deliveries of the
+  same payment through the real in-flight locks. Exactly one executes and
+  records a decision in an isolated audit chain; the rest get
+  `409 IN_FLIGHT_LOCK_ACTIVE`; a late duplicate gets the original outcome
+  replayed from the result cache. The invariant — and its audit proof — is
+  in the response, so the console never counts on its own.
+- **Simulate a bank 504 flap.** Injects route failures into the shared
+  breaker: watch the circuit go CLOSED → OPEN, retries suppressed for the
+  cooldown, and the reroute advisory (payment link on a healthy rail) with
+  the penalty fees avoided. Then diagnose the same route in the Live AI
+  tab — the suppression appears there too, because the lab and the live
+  path share one breaker instance.
+- **Price a recovery (NRV).** Sliders for amount, channel, P(success),
+  fatigue and LTV; the server computes yield − cost − churn risk and
+  vetoes margin-negative actions with the arithmetic printed. Sub-₹100 on
+  a paid channel trips the small-ticket invariant regardless of
+  probability.
 
 ## What is deliberately on the screen
 

@@ -75,3 +75,31 @@
   .ax-entry__row { grid-template-columns: 5ch 1fr auto; }
   .ax-entry__hash, .ax-entry__ts { display: none; }
 }
+
+/* Audit seal export ------------------------------------------------ */
+
+.ax-chain__prevented {
+  margin: var(--s-2) 0 0;
+  font-size: 11px;
+  color: var(--gate);
+  max-width: 60ch;
+}
+
+.ax-chain__export {
+  margin-top: var(--s-2);
+  background: var(--brand, #528FF0);
+  color: #fff;
+  border: 0;
+  border-radius: var(--radius);
+  padding: var(--s-2) var(--s-3);
+  font-weight: 600;
+  font-size: var(--step--1);
+  cursor: pointer;
+  width: 100%;
+  transition: filter 120ms ease;
+}
+.ax-chain__export:hover { filter: brightness(1.08); }
+
+.ax-chain__export-note { margin: var(--s-2) 0 0; font-size: 11px; color: var(--ink-faint); max-width: 40ch; }
+.ax-chain__export-note.is-failed { color: var(--break); }
+.ax-chain__export-note code { font-family: var(--font-figure); display: block; margin-top: 4px; word-break: break-all; }

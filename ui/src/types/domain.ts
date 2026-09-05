@@ -294,4 +294,102 @@ export interface ChainVerification {
   /** Sequence number where the chain first breaks. Null when valid. */
   brokenAt: number | null;
   head: string;
+  /** Gate vetoes recorded inside decision payloads — what the system
+   *  REFUSED to do, counted from the chain itself. */
+  prevented_actions?: number;
+}
+
+/* ------------------------------------------------------------------ */
+/* Chaos Lab                                                           */
+/* ------------------------------------------------------------------ */
+
+/** One webhook delivery racing through the idempotency layer. */
+export interface ChaosWorker {
+  worker: number;
+  status: 'ACQUIRED_LOCK' | 'REJECTED_IN_FLIGHT' | 'IDEMPOTENT_CACHED';
+  http: number;
+  executed: boolean;
+  detail?: string;
+  decision_recorded?: boolean;
+}
+
+export interface ChaosConcurrencyResult {
+  scenario: 'chaos_concurrency';
+  workers: number;
+  payment_id: string;
+  elapsed_ms: number;
+  results: ChaosWorker[];
+  summary: {
+    inbound: number;
+    executed: number;
+    rejected_in_flight: number;
+    replayed_from_cache: number;
+    invariant_holds: boolean;
+    invariant: string;
+  };
+  audit_proof: {
+    chain_valid: boolean;
+    entries: number;
+    decision_entries: number;
+    head: string;
+    note: string;
+  };
+}
+
+export interface BankFlapStep {
+  step: number;
+  event: string;
+  circuit: 'CLOSED' | 'OPEN' | 'HALF_OPEN';
+  note: string;
+}
+
+export interface BankFlapResult {
+  scenario: 'bank_flap';
+  route: string;
+  injected: number;
+  error_code: string;
+  timeline: BankFlapStep[];
+  final: {
+    route: string;
+    circuit: 'CLOSED' | 'OPEN' | 'HALF_OPEN';
+    allowed: boolean;
+    reason: string;
+    cooldownRemainingMs?: number;
+  };
+  reroute: {
+    original_action: string;
+    suppressed_on: string;
+    recommended_instead: string;
+    why: string;
+    penalty_fees_avoided_paise: number;
+    cooldown_minutes: number;
+  } | null;
+  shared_state: { note: string; stats: { open_routes: string[]; window_failures: number; retries_suppressed: number } };
+}
+
+export interface NrvVerdict {
+  nrv_paise: number;
+  margin_positive: boolean;
+  verdict: 'EXECUTE_RECOVERY' | 'VETO_NEGATIVE_MARGIN' | 'VETO_SMALL_TICKET';
+  breakdown: {
+    expected_yield_paise: number;
+    channel_cost_paise: number;
+    churn_penalty_paise: number;
+  };
+  reason: string;
+}
+
+export interface NrvResult {
+  scenario: 'nrv';
+  input: {
+    amount_paise: number;
+    p_success: number;
+    action: string;
+    customer_ltv_paise: number;
+    fatigue: number;
+  };
+  formula: string;
+  channel_costs_inr: Record<string, number>;
+  verdict: NrvVerdict;
+  engine_note: string;
 }

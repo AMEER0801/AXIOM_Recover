@@ -115,8 +115,18 @@ if (require.main === module) {
     const priors = JSON.parse(fs.readFileSync(path.join(__dirname, "model", "agent-priors.json"), "utf8"));
     const { ledger } = generate({ seed, records });
 
-    const baseline = await runBatch2({ ledger, rates, priors, seed, rounds, policy: baselinePolicy, useApprovals: true });
-    const smart = await runBatch2({ ledger, rates, priors, seed, rounds, policy: smartPolicy, useApprovals: true });
+    /* Every arm runs under the IDENTICAL gate configuration. An earlier version
+       let the baseline inherit the tighter defaults while FINAL ran at the tuned
+       ceiling, which flattered FINAL by handicapping its comparator. Matching the
+       config here means the reported gap is attributable to the POLICY, not to a
+       config change — and it is the same pairing console-eval.js uses, so the
+       single-seed demo and the 20-seed headline now agree by construction. */
+    const armCfg = {
+      maxAttemptsPerEntity: FINAL_CONFIG.maxAttemptsPerEntity,
+      autoApprovalCeilingPaise: FINAL_CONFIG.autoApprovalCeilingPaise,
+    };
+    const baseline = await runBatch2({ ledger, rates, priors, seed, rounds, policy: baselinePolicy, useApprovals: true, policyConfig: armCfg });
+    const smart = await runBatch2({ ledger, rates, priors, seed, rounds, policy: smartPolicy, useApprovals: true, policyConfig: armCfg });
     const final = await runFinalPolicy({ ledger, rates, priors, seed, rounds, warmupSeeds });
     const ceiling = runCeiling(seed, records, {
       rounds, attemptCap: FINAL_CONFIG.maxAttemptsPerEntity, respectQuietHours: true,

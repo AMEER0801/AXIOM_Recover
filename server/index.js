@@ -1,4 +1,5 @@
 "use strict";
+require("./load-env"); // must run before any process.env read below
 /* ══════════════════════════════════════════════════════════════
    INGESTION SERVER
    ──────────────────────────────────────────────────────────────
@@ -8,13 +9,27 @@
    handler that also acts is a webhook handler that acts on
    whatever an unverified request tells it to.
 
+   Two production safeguards live on this path (both zero-dep,
+   both visible on /health):
+
+     · lib/idempotency.js — an atomic in-flight lock per payment
+       plus an event-outcome cache, so concurrent duplicate
+       deliveries cannot double-execute. Concurrent loser gets
+       409 IN_FLIGHT_LOCK_ACTIVE; late duplicates get the ORIGINAL
+       outcome replayed. test/concurrency.test.js proves it.
+
+     · lib/circuitBreaker.js — route-shaped failures (issuer /
+       gateway / timeout, never customer-shaped ones) feed a
+       rolling-window breaker that suppresses retries against a
+       degraded bank rail. test/enterprise.test.js proves it.
+
    Node 22's built-in http module; no express, no dependencies.
    The raw request body has to be read anyway for signature
    verification, so a body-parser would only get in the way.
 
    ── Endpoints ────────────────────────────────────────────────
-     GET  /health              liveness + posture
-     POST /webhooks/razorpay   verified ingestion
+     GET  /health              liveness + posture + safeguards
+     POST /webhooks/razorpay   verified ingestion (409 on race)
      GET  /ledger              what has been ingested (dev only)
      GET  /egress              every host this process may contact
    ══════════════════════════════════════════════════════════════ */
@@ -27,6 +42,8 @@ const {
   createEventSeenSet, contactHash,
 } = require("./lib/verify");
 const { validateRecord } = require("./lib/schema");
+const { idempotency } = require("./lib/idempotency");
+const { breaker } = require("./lib/circuitBreaker");
 
 const PORT = Number(process.env.PORT || 8787);
 const WEBHOOK_SECRET = process.env.RAZORPAY_WEBHOOK_SECRET || "";
@@ -190,6 +207,23 @@ function classifyFailureReason(ent, kind) {
   return "payment_timeout";
 }
 
+/* ── bank-outage attribution ──────────────────────────────────
+   The circuit breaker (lib/circuitBreaker.js) only learns from
+   failures that look like ROUTE problems, not customer problems:
+   an expired card says nothing about HDFC's UPI switch, and
+   counting it as an outage signal would trip the breaker on
+   healthy traffic. Bank identity, when the payload carries one,
+   lives in notes (Razorpay does not send a structured issuer
+   field on all failure events); without it, the failure
+   attributes to the method rail — a coarser but honest scope. */
+const OUTAGE_REASONS = new Set(["issuer_down", "payment_timeout", "gateway_error"]);
+
+function routeKeyOf(ent) {
+  const bank = ent?.notes && (ent.notes.issuer_bank || ent.notes.bank);
+  if (bank) return String(bank);
+  return String(ent?.method || "unknown");
+}
+
 function reject(res, reason, code = 400) {
   rejected.push({ ts: new Date().toISOString(), reason });
   /* The caller learns only that it failed. The reason stays here,
@@ -212,6 +246,9 @@ const server = http.createServer(async (req, res) => {
       ingested: fs.existsSync(LEDGER_PATH) ? fs.readFileSync(LEDGER_PATH, "utf8").split("\n").filter(Boolean).length : 0,
       rejected: rejected.length,
       dedupe_cache: seen.size(),
+      /* the two live-path safeguards, visible to a prober */
+      idempotency: idempotency.stats(),
+      circuit_breaker: { config: breaker.config(), ...breaker.stats() },
     });
   }
 
@@ -251,21 +288,77 @@ const server = http.createServer(async (req, res) => {
       return json(res, 200, { ok: true, duplicate: true });
     }
 
-    const mapped = toCanonical(event);
-    if (mapped.skip) return json(res, 200, { ok: true, ignored: mapped.reason });
-
-    const valid = validateRecord(mapped.record);
-    if (!valid.ok) {
-      rejected.push({ ts: new Date().toISOString(), reason: "schema", errors: valid.errors });
-      /* 200, not 4xx: the delivery was legitimate, our mapping was
-         not. Returning an error would make Razorpay retry a payload
-         that will fail identically every time. Quarantine and move
-         on — the count is visible on /health. */
-      return json(res, 200, { ok: true, quarantined: true });
+    /* ── in-flight idempotency lock ─────────────────────────────
+       Two deliveries of the same payment racing through THIS
+       handler concurrently would both ingest and (in a deployment
+       with the recovery layer attached) both act — the double
+       charge. The first delivery in wins the lock; the others get
+       409 NOW so the gateway retries them seconds later, by which
+       time the winner has finished and the retry hits either the
+       event-seen set above or the result cache below. 409 is
+       deliberate: it tells the sender "try again", which here is
+       exactly the right instruction. */
+    const paymentId = event?.payload?.payment?.entity?.id
+      || event?.payload?.order?.entity?.id
+      || event?.payload?.subscription?.entity?.id
+      || event?.payload?.invoice?.entity?.id;
+    if (paymentId && !idempotency.acquireLock(paymentId)) {
+      rejected.push({ ts: new Date().toISOString(), reason: "in_flight_lock", payment_id: paymentId });
+      return json(res, 409, { ok: false, code: "IN_FLIGHT_LOCK_ACTIVE", payment_id: paymentId, retry_after_s: 3 });
     }
 
-    fs.appendFileSync(LEDGER_PATH, JSON.stringify(mapped.record) + "\n");
-    return json(res, 200, { ok: true, ingested: mapped.record.event_id });
+    /* A duplicate arriving with a FRESH event id (Razorpay can
+       re-emit) gets the original outcome replayed, not a second
+       execution. */
+    const cached = idempotency.cachedResult(eventId);
+    if (cached) {
+      if (paymentId) idempotency.releaseLock(paymentId);
+      return json(res, 200, { ok: true, replayed: true, prior_result: cached });
+    }
+
+    let response;
+    let code = 200;
+    try {
+      const mapped = toCanonical(event);
+      if (mapped.skip) {
+        response = { ok: true, ignored: mapped.reason };
+      } else {
+        const valid = validateRecord(mapped.record);
+        if (!valid.ok) {
+          rejected.push({ ts: new Date().toISOString(), reason: "schema", errors: valid.errors });
+          /* 200, not 4xx: the delivery was legitimate, our mapping was
+             not. Returning an error would make Razorpay retry a payload
+             that will fail identically every time. Quarantine and move
+             on — the count is visible on /health. */
+          response = { ok: true, quarantined: true };
+        } else {
+          /* ── circuit-breaker feed ───────────────────────────────
+             Route-shaped failures teach the breaker; customer-shaped
+             ones do not (see OUTAGE_REASONS above). This ingestion
+             path only OBSERVES — acting on a tripped route is the
+             recovery layer's job, and the breaker's status is on
+             /health for it (and for you) to read. */
+          if (mapped.record.failure && OUTAGE_REASONS.has(mapped.record.failure.reason)) {
+            const ent = event?.payload?.payment?.entity || {};
+            breaker.recordFailure(routeKeyOf(ent), mapped.record.failure.code);
+          }
+
+          fs.appendFileSync(LEDGER_PATH, JSON.stringify(mapped.record) + "\n");
+          response = { ok: true, ingested: mapped.record.event_id };
+        }
+      }
+    } catch (err) {
+      /* The lock is released in finally, so a crash here cannot leak
+         it; the outcome is recorded as a failure so a retry is NOT
+         answered from a cache claiming success. */
+      rejected.push({ ts: new Date().toISOString(), reason: "handler_error", detail: String(err?.message || err) });
+      response = { ok: false, code: "PROCESSING_ERROR" };
+      code = 500;
+    } finally {
+      if (eventId) idempotency.recordResult(eventId, response);
+      if (paymentId) idempotency.releaseLock(paymentId);
+    }
+    return json(res, code, response);
   }
 
   json(res, 404, { ok: false });
