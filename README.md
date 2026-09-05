@@ -4,6 +4,9 @@
 
 Built for the Razorpay AI Buildathon, Track 3 (AI Revenue Recovery), with Track 4 (AI Finance Controller) built in as the measurement layer.
 
+**▶ Live console:** [ameer0801.github.io/AXIOM_Recover](https://ameer0801.github.io/AXIOM_Recover/)
+*(a static build — it shows honestly-labelled fixture data, not a live server. The Chaos Lab, Live AI, and Audit-export tabs need the real backend, which only runs locally — see Quick Start below.)*
+
 ---
 
 ## The result, and how to reproduce it in ten minutes
